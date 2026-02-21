@@ -1,0 +1,160 @@
+name: Build & Publish Docker Image
+
+# Builds a NativeAOT multi-arch (linux/amd64 + linux/arm64) image and pushes
+# to GitHub Container Registry (ghcr.io).
+#
+# NativeAOT cannot use QEMU emulation — each platform must be built on a
+# native runner. Each matrix job pushes its image by digest only; the merge
+# job stitches them into a single multi-arch manifest and applies all tags.
+#
+# Tag strategy:
+#   push to main  → ghcr.io/mikara89/deda:latest
+#   tag v1.2.3    → ghcr.io/mikara89/deda:1.2.3  (+ :1.2  + :1  + :latest)
+#   pull_request  → build-only, no push
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}   # mikara89/deda → ghcr.io/mikara89/deda
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 1 — Build one platform per native runner, push image by digest
+# ──────────────────────────────────────────────────────────────────────────────
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            targetrid: linux-x64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            targetrid: linux-arm64
+            runner: ubuntu-24.04-arm   # GitHub-hosted native ARM64 runner
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Labels only here — final tags are applied in the merge job
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      # Push by digest (no tag) so the merge job can combine both platforms
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Deda.Host/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: TARGETRID=${{ matrix.targetrid }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: >-
+            type=image,
+            name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},
+            push-by-digest=true,
+            name-canonical=true,
+            push=${{ github.event_name != 'pull_request' }}
+          # Scope cache per platform to avoid cross-contamination
+          cache-from: type=gha,scope=build-${{ matrix.targetrid }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.targetrid }}
+
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.targetrid }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 2 — Merge both digests into a single multi-arch manifest
+# ──────────────────────────────────────────────────────────────────────────────
+  merge:
+    name: Merge multi-arch manifest
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download digest artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Full tag set resolved here once, applied atomically to the manifest
+      - name: Extract metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          # shellcheck disable=SC2046  # word splitting intentional — expands tags and digests as separate args
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+      - name: Inspect manifest
+        run: |
+          docker buildx imagetools inspect \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}

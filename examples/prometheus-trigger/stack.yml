@@ -1,0 +1,213 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEDA — Prometheus trigger example stack
+#
+# Scales "demo-http" based on HTTP request rate measured via Traefik metrics
+# scraped by Prometheus.
+#
+# Architecture:
+#   internet → Traefik (port 80) → demo-http
+#                ↓ /metrics:8082
+#             Prometheus (port 9090)
+#                ↑ query
+#              DEDA → scales demo-http via docker-proxy
+#
+# Prerequisites:
+#   • Docker Swarm mode active (docker swarm init)
+#
+# Deploy (from this directory so ./prometheus.yml resolves):
+#   cd examples/prometheus-trigger
+#   docker stack deploy -c stack.yml deda
+#
+# Test: send traffic to demo-http to trigger scale-up
+#   curl -H "Host: demo.local" http://<manager-ip>/
+#   # or add "127.0.0.1 demo.local" to /etc/hosts and use http://demo.local/
+#
+# Verify:
+#   curl http://<manager-ip>:8080/health/ready
+#   curl http://<manager-ip>:9090/graph?g0.expr=sum(rate(traefik_service_requests_total[1m]))
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  deda_net:
+    driver: overlay
+    attachable: false
+
+services:
+
+  # ── docker-proxy ────────────────────────────────────────────────────────────
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    networks: [deda_net]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SERVICES: "1"
+      TASKS: "1"
+      NODES: "1"
+      SWARM: "1"
+      VERSION: "1"
+      POST: "1"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+
+  # ── deda ────────────────────────────────────────────────────────────────────
+  # No secrets needed — Prometheus trigger requires no credentials by default
+  deda:
+    image: ghcr.io/mikara89/deda:latest
+    networks: [deda_net]
+    environment:
+      DEDA_POLL_SECONDS: "10"
+      DEDA_HTTP_PORT: "8080"
+      DEDA_LOG_DECISIONS: "true"
+      DEDA_MAX_SERVICES_PER_CYCLE: "25"
+      DEDA_JITTER_ENABLED: "true"
+      DOCKER_HOST: "http://docker-proxy:2375"
+    ports:
+      - target: 8080
+        published: 8080
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  # ── prometheus ───────────────────────────────────────────────────────────────
+  # Scrapes Traefik request-rate metrics. Config file is mounted from the same
+  # directory — run `docker stack deploy` from examples/prometheus-trigger/.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    networks: [deda_net]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=1d" # minimal retention for dev
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # ── traefik ──────────────────────────────────────────────────────────────────
+  # Reverse proxy + load balancer. Publishes HTTP on port 80 and exposes
+  # Prometheus metrics on the dedicated :8082 metrics entrypoint.
+  traefik:
+    image: traefik:v3.6.7
+    networks: [deda_net]
+    ports:
+      - "80:80" # HTTP traffic
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      # Swarm provider — discovers services via Docker socket
+      - --providers.swarm=true
+      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=deda_net # overlay network to use for routing
+
+      # Entrypoints
+      - --entrypoints.web.address=:80
+
+      # Prometheus metrics — scraped by Prometheus at :8082/metrics
+      - --metrics.prometheus=true
+      - --metrics.prometheus.addentrypointslabels=true
+      - --metrics.prometheus.addserviceslabels=true
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus.entryPoint=metrics
+
+      - --api.dashboard=true
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      labels:
+        - traefik.enable=true
+        # Dashboard available at http://proxy.local (add to /etc/hosts for local testing)
+        - traefik.http.routers.traefik.rule=Host(`proxy.local`)
+        - traefik.http.routers.traefik.service=api@internal
+        - traefik.http.services.traefik.loadbalancer.server.port=8080
+
+  # ── demo-http ─────────────────────────────────────────────────────────────────
+  # Simple HTTP echo service behind Traefik. Replace with your real workload.
+  # Send traffic to http://demo.local/ (or http://<manager-ip>/ with a Host header)
+  # to drive the RPS metric and trigger autoscaling.
+  demo-http:
+    image: nginxdemos/hello:plain-text
+    networks: [deda_net]
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        # ── Traefik routing ──────────────────────────────────────────────────
+        traefik.enable: "true"
+        traefik.http.routers.demo.rule: "Host(`demo.local`)"
+        traefik.http.routers.demo.entrypoints: "web"
+        traefik.http.services.demo.loadbalancer.server.port: "80"
+
+        # ── DEDA autoscale ───────────────────────────────────────────────────
+        com.deda.autoscale.enabled: "true"
+
+        com.deda.autoscale.min: "1" # always keep at least one replica
+        com.deda.autoscale.max: "20"
+
+        # ── scaling math ─────────────────────────────────────────────────────
+        # desired_replicas = ceil(query_result / targetPerReplica)
+        # With the query below (total RPS across all Traefik services):
+        #   100 req/s → ceil(100/20) = 5 replicas
+        com.deda.autoscale.targetPerReplica: "20"
+
+        com.deda.autoscale.activationThreshold: "1"
+
+        # ── anti-flap controls ────────────────────────────────────────────────
+        com.deda.autoscale.cooldownSeconds: "60"
+        com.deda.autoscale.scaleDownDelaySeconds: "120"
+        com.deda.autoscale.stepUp: "5"
+        com.deda.autoscale.stepDown: "2"
+
+        # ── trigger ──────────────────────────────────────────────────────────
+        com.deda.autoscale.trigger.type: "prometheus"
+
+        # Prometheus is reachable on deda_net by service name
+        com.deda.autoscale.trigger.url: "http://prometheus:9090"
+
+        # Instant query: total inbound HTTP requests per second across all
+        # Traefik services over the last 1 minute. Adjust to scope to a single
+        # service: rate(traefik_service_requests_total{service="demo-http@docker"}[1m])
+        com.deda.autoscale.trigger.query: "sum(rate(traefik_service_requests_total[1m]))"
+
+        # ── failsafe ─────────────────────────────────────────────────────────
+        # If Prometheus is unreachable, hold the current replica count
+        com.deda.autoscale.failsafe: "hold"

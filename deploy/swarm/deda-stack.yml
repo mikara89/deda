@@ -1,0 +1,166 @@
+version: "3.8"
+
+services:
+  # deda:
+  #   image: dedahost:latest   # build/push your host image
+  #   environment:
+  #     DEDA_HTTP_PORT: "8081"
+  #     DEDA_POLL_SECONDS: "10"
+  #     DEDA_HTTP_TIMEOUT_SECONDS: "5"
+  #     DEDA_MAX_SERVICES_PER_CYCLE: "25"
+  #     DEDA_JITTER_ENABLED: "true"
+
+  #     # Credentials via *_FILE (Swarm secrets)
+  #     RABBITMQ_USER_FILE: "/run/secrets/rabbitmq_user"
+  #     RABBITMQ_PASS_FILE: "/run/secrets/rabbitmq_pass"
+  #   user: "0:0"  # Run as root to access Docker socket (MVP)
+  #   ports:
+  #     - "8081:8081"
+
+  #   secrets:
+  #     - rabbitmq_user
+  #     - rabbitmq_pass
+
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  #   deploy:
+  #     replicas: 1
+  #     resources:
+  #       limits:
+  #         cpus: "0.25"
+  #         memory: 256M
+  #       reservations:
+  #         cpus: "0.1"
+  #         memory: 64M
+  #     placement:
+  #       constraints:
+  #         - node.role == manager
+  #     restart_policy:
+  #       condition: on-failure
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+  worker-rmq:
+    image: alpine:3.20
+    command: sleep 999999
+    depends_on:
+      - rabbitmq
+    deploy:
+      replicas: 0
+      labels:
+        com.deda.autoscale.enabled: "false"
+        com.deda.autoscale.min: "0"
+        com.deda.autoscale.max: "20"
+        com.deda.autoscale.targetPerReplica: "50"
+        com.deda.autoscale.activationThreshold: "5"
+        com.deda.autoscale.cooldownSeconds: "30"
+        com.deda.autoscale.stepUp: "5"
+        com.deda.autoscale.stepDown: "3"
+        com.deda.autoscale.trigger.type: "rabbitmq"
+        com.deda.autoscale.trigger.url: "http://rabbitmq:15672"
+        com.deda.autoscale.trigger.vhost: "/"
+        com.deda.autoscale.trigger.queue: "my-queue"
+        com.deda.autoscale.trigger.metric: "messages"
+
+  
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+
+  traefik:
+    image: traefik:v3.6.7
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      # Providers
+      - --providers.swarm=true
+      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=deda_default
+
+      # Entrypoints
+      - --entrypoints.web.address=:80
+
+      # Observability
+      - --accesslog=true
+      - --metrics.prometheus=true
+      - --metrics.prometheus.addentrypointslabels=true
+      - --metrics.prometheus.addserviceslabels=true
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus.entryPoint=metrics
+
+      # Dashboard (keep internal; expose via labels behind SSO)
+      - --api.dashboard=true
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - traefik.enable=true
+
+        # Dashboard route: https://proxy.${DOMAIN}
+        - traefik.http.routers.traefik.rule=Host(`proxy.local`)
+        - traefik.http.routers.traefik.service=api@internal
+        - traefik.http.services.traefik.loadbalancer.server.port=8080
+
+        # # # Protect dashboard with ForwardAuth (middleware defined in oauth2-proxy stack)
+        # - traefik.http.routers.traefik.middlewares=auth@docker,oauth-errors@docker
+
+  demo-http:
+    image: nginxdemos/hello:plain-text
+    deploy:
+      replicas: 1
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.demo.rule: "Host(`demo.local`)"
+        traefik.http.routers.demo.entrypoints: "web"
+        traefik.http.services.demo.loadbalancer.server.port: "80"
+
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.min: "1"
+        com.deda.autoscale.max: "20"
+        com.deda.autoscale.targetPerReplica: "20"
+        com.deda.autoscale.activationThreshold: "1"
+        com.deda.autoscale.cooldownSeconds: "60"
+        com.deda.autoscale.scaleDownDelaySeconds: "120"
+        com.deda.autoscale.stepUp: "5"
+        com.deda.autoscale.stepDown: "2"
+        com.deda.autoscale.trigger.type: "prometheus"
+        com.deda.autoscale.trigger.url: "http://host.docker.internal:9090"
+        com.deda.autoscale.trigger.query: 'sum(rate(traefik_service_requests_total[1m]))'
+secrets:
+  rabbitmq_user:
+    external: true
+  rabbitmq_pass:
+    external: true
+
+volumes:
+  rabbitmq_data:

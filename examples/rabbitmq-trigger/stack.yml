@@ -1,0 +1,195 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEDA — RabbitMQ trigger example stack
+#
+# Scales "worker-rmq" based on the depth of a RabbitMQ queue.
+# Credentials are injected via Docker Swarm secrets (never plain env vars).
+#
+# Prerequisites:
+#   • Docker Swarm mode active (docker swarm init)
+#   • Two Swarm secrets created:
+#       printf 'admin' | docker secret create rabbitmq_user -
+#       printf 'changeme' | docker secret create rabbitmq_pass -
+#     (replace 'admin' / 'changeme' with your actual credentials)
+#
+# Deploy:
+#   docker stack deploy -c examples/rabbitmq-trigger/stack.yml deda
+#
+# Verify:
+#   docker stack services deda
+#   curl http://<manager-ip>:8080/health/ready
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  deda_net:
+    driver: overlay
+    attachable: false
+
+# ── Swarm secrets ─────────────────────────────────────────────────────────────
+# These secrets must exist in the Swarm before deploying.
+# See: docs/adr/0009-credentials-env-or-secrets-file.md
+secrets:
+  rabbitmq_user:
+    external: true # created with: printf 'admin' | docker secret create rabbitmq_user -
+  rabbitmq_pass:
+    external: true # created with: printf 'changeme' | docker secret create rabbitmq_pass -
+
+volumes:
+  rabbitmq_data: # persist queue metadata across container restarts
+
+services:
+
+  # ── docker-proxy ────────────────────────────────────────────────────────────
+  # Exposes a minimal, read-only subset of the Docker API over TCP.
+  # DEDA uses this instead of a raw socket mount — no root access required.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    networks: [deda_net]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SERVICES: "1"
+      TASKS: "1"
+      NODES: "1"
+      SWARM: "1"
+      VERSION: "1"
+      POST: "1"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+
+  # ── deda ────────────────────────────────────────────────────────────────────
+  deda:
+    image: ghcr.io/mikara89/deda:latest
+    networks: [deda_net]
+    secrets:
+      - rabbitmq_user # mounted at /run/secrets/rabbitmq_user
+      - rabbitmq_pass # mounted at /run/secrets/rabbitmq_pass
+    environment:
+      DEDA_POLL_SECONDS: "10"
+      DEDA_HTTP_PORT: "8080"
+      DEDA_LOG_DECISIONS: "true"
+      DEDA_MAX_SERVICES_PER_CYCLE: "25"
+      DEDA_JITTER_ENABLED: "true"
+      DOCKER_HOST: "http://docker-proxy:2375"
+
+      # Read RabbitMQ credentials from the mounted secret files.
+      # DEDA re-reads these every reconcile cycle, supporting secret rotation
+      # without a container restart.
+      RABBITMQ_USER_FILE: "/run/secrets/rabbitmq_user"
+      RABBITMQ_PASS_FILE: "/run/secrets/rabbitmq_pass"
+    ports:
+      - target: 8080
+        published: 8080
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  # ── rabbitmq ─────────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management
+    networks: [deda_net]
+    environment:
+      # These credentials must match the values stored in the Swarm secrets
+      # above. Use the management UI at http://<manager-ip>:15672 to inspect
+      # queue depth during testing.
+      RABBITMQ_DEFAULT_USER: admin # ⚠️ keep in sync with rabbitmq_user secret
+      RABBITMQ_DEFAULT_PASS: changeme # ⚠️ keep in sync with rabbitmq_pass secret
+    ports:
+      - "5672:5672" # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager # keep near DEDA for low-latency polling
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # ── worker-rmq ───────────────────────────────────────────────────────────────
+  # Demo worker — replace with your real workload.
+  # All autoscale config lives in deploy.labels; no code changes needed.
+  worker-rmq:
+    image: alpine:3.20
+    command: ["sleep", "infinity"] # simulates a running worker
+    networks: [deda_net]
+    deploy:
+      replicas: 0 # start at 0; DEDA will scale up once queue depth exceeds activationThreshold
+      restart_policy:
+        condition: on-failure
+      labels:
+        # ── opt-in ──────────────────────────────────────────────────────────
+        com.deda.autoscale.enabled: "true"
+
+        # ── replica bounds ───────────────────────────────────────────────────
+        com.deda.autoscale.min: "0" # scale to zero when queue is empty
+        com.deda.autoscale.max: "20" # hard cap — never exceed this
+
+        # ── scaling math ─────────────────────────────────────────────────────
+        # desired_replicas = ceil(queue_depth / targetPerReplica)
+        # e.g., 200 messages → ceil(200/50) = 4 replicas
+        com.deda.autoscale.targetPerReplica: "50"
+
+        # Only start scaling up when queue depth exceeds this threshold.
+        # Prevents noisy scale-ups from brief bursts.
+        com.deda.autoscale.activationThreshold: "5"
+
+        # ── anti-flap controls ────────────────────────────────────────────────
+        # Block any scale-down for this many seconds after a scale-up event
+        com.deda.autoscale.cooldownSeconds: "30"
+
+        # Queue depth must stay low for this entire window before scaling down
+        com.deda.autoscale.scaleDownDelaySeconds: "120"
+
+        # Maximum replicas added in a single cycle (0 = unlimited)
+        com.deda.autoscale.stepUp: "5"
+
+        # Maximum replicas removed in a single cycle (0 = unlimited)
+        com.deda.autoscale.stepDown: "3"
+
+        # ── trigger ──────────────────────────────────────────────────────────
+        com.deda.autoscale.trigger.type: "rabbitmq"
+
+        # URL of the RabbitMQ Management API (service name resolves on deda_net)
+        com.deda.autoscale.trigger.url: "http://rabbitmq:15672"
+
+        com.deda.autoscale.trigger.vhost: "/"
+
+        # Name of the queue to watch
+        com.deda.autoscale.trigger.queue: "my-queue"
+
+        # Metric to read: "messages" (total), "messages_ready", or
+        # "messages_unacknowledged"
+        com.deda.autoscale.trigger.metric: "messages_ready"
+
+        # ── failsafe ─────────────────────────────────────────────────────────
+        # Replica target when the trigger (RabbitMQ) is unreachable:
+        #   hold = keep current count (default)
+        #   min  = scale to min replicas
+        #   max  = scale to max replicas
+        com.deda.autoscale.failsafe: "hold"

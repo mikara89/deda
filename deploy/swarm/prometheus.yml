@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: "deda"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "deda:8080"
+
+  # If you already have Traefik metrics exposed on :8082 (example), scrape it:
+  - job_name: "traefik"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "traefik:8082"

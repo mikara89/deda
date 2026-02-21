@@ -1,0 +1,100 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEDA — Minimal example stack
+#
+# Deploys DEDA with a Docker socket proxy (principle of least privilege).
+# No demo workload is included — add your own services and label them.
+#
+# Prerequisites:
+#   • Docker Swarm mode active (docker swarm init)
+#
+# Deploy:
+#   docker stack deploy -c examples/minimal/stack.yml deda
+#
+# Once deployed, DEDA's HTTP API is available on the published port:
+#   curl http://<manager-ip>:8080/health/ready
+#   curl http://<manager-ip>:8080/metrics
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  deda_net:
+    driver: overlay
+    # attachable: false — services outside this stack cannot join the network
+    attachable: false
+
+services:
+
+  # ── docker-proxy ────────────────────────────────────────────────────────────
+  # Tecnativa Docker Socket Proxy exposes a read-only subset of the Docker API
+  # over TCP. DEDA connects to this instead of the raw socket, which means the
+  # DEDA container never needs root access or a direct socket mount.
+  # See: docs/adr/0004-docker-socket-proxy.md
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    networks: [deda_net]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # Minimum permissions required by DEDA
+      SERVICES: "1" # list / inspect services
+      TASKS: "1" # read task state
+      NODES: "1" # read node placement
+      SWARM: "1" # swarm info
+      VERSION: "1" # API version negotiation
+      POST: "1" # scale (update service replica count)
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager # socket is only on managers
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+
+  # ── deda ────────────────────────────────────────────────────────────────────
+  deda:
+    image: ghcr.io/mikara89/deda:latest # replace with a pinned tag in production
+    networks: [deda_net]
+    environment:
+      # How often (in seconds) to poll each service's trigger and reconcile
+      DEDA_POLL_SECONDS: "10"
+
+      # Internal HTTP port — used for /metrics, /health/live, /health/ready
+      DEDA_HTTP_PORT: "8080"
+
+      # Log every scale decision at INFO level (set "false" to reduce noise)
+      DEDA_LOG_DECISIONS: "true"
+
+      # Maximum services evaluated per reconcile cycle (round-robin paging).
+      # Prevents long cycles on large fleets.
+      DEDA_MAX_SERVICES_PER_CYCLE: "25"
+
+      # Add small random delay before each scale-up to avoid thundering-herd
+      # when multiple services fire simultaneously
+      DEDA_JITTER_ENABLED: "true"
+
+      # Route Docker API calls through the socket proxy (no raw socket needed)
+      DOCKER_HOST: "http://docker-proxy:2375"
+    ports:
+      - target: 8080
+        published: 8080 # change if the port is in use on your manager
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M

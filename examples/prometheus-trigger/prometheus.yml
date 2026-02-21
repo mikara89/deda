@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  # DEDA's own metrics endpoint
+  - job_name: "deda"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "deda:8080"
+
+  # Traefik exposes request-rate metrics used by the demo-http autoscaler
+  - job_name: "traefik"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "traefik:8082"
