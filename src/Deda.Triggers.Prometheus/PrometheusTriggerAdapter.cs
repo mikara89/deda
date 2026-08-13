@@ -1,20 +1,11 @@
-﻿using Deda.Core;
+using Deda.Core;
 using System.Globalization;
 using System.Text.Json;
 
 namespace Deda.Triggers.Prometheus
 {
     /// <summary>
-    /// Prometheus trigger:
-    /// - Calls: GET {url}/api/v1/query?query=...
-    /// - Expects a single timeseries result OR multiple, but we take the first for MVP.
-    /// - Work is the numeric value.
-    ///
-    /// Labels:
-    /// com.deda.autoscale.trigger.type=prometheus
-    /// com.deda.autoscale.trigger.url=http://prometheus:9090
-    /// com.deda.autoscale.trigger.query=sum(rate(...[1m]))
-    /// optional: timeoutSeconds=5
+    /// Reads one scalar or exactly one vector element from the Prometheus instant query API.
     /// </summary>
     public sealed class PrometheusTriggerAdapter : ITriggerAdapter
     {
@@ -22,7 +13,6 @@ namespace Deda.Triggers.Prometheus
         public string Type => TriggerType;
 
         private readonly IHttpClientFactory _httpClientFactory;
-        private static readonly PrometheusJsonContext JsonCtx = PrometheusJsonContext.Default;
 
         public PrometheusTriggerAdapter(IHttpClientFactory httpClientFactory)
         {
@@ -39,11 +29,7 @@ namespace Deda.Triggers.Prometheus
                 if (!config.TriggerConfig.TryGetValue("query", out var query) || string.IsNullOrWhiteSpace(query))
                     return TriggerResult.Fail("prometheus trigger requires trigger.query");
 
-                var timeoutSeconds =
-                    config.TriggerConfig.TryGetValue("timeoutSeconds", out var ts) && int.TryParse(ts, out var tsv) && tsv > 0
-                        ? tsv
-                        : 5;
-
+                var timeoutSeconds = ReadTimeoutSeconds(config);
                 var url = BuildQueryUri(baseUrl, query);
 
                 var client = _httpClientFactory.CreateClient("prometheus");
@@ -53,32 +39,16 @@ namespace Deda.Triggers.Prometheus
                 if (!resp.IsSuccessStatusCode)
                 {
                     var body = await SafeRead(resp, ct).ConfigureAwait(false);
-                    return TriggerResult.Fail($"prometheus http {(int)resp.StatusCode}: {Trunc(body, 200)}");
+                    return TriggerResult.Fail($"prometheus http {(int)resp.StatusCode}: {Truncate(body, 200)}");
                 }
 
                 await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-                var dto = await JsonSerializer.DeserializeAsync(stream, JsonCtx.PromQueryResponse, ct).ConfigureAwait(false);
-
-                if (dto is null)
-                    return TriggerResult.Fail("prometheus: empty response");
-
-                if (!string.Equals(dto.Status, "success", StringComparison.OrdinalIgnoreCase))
-                    return TriggerResult.Fail($"prometheus: {dto.ErrorType}:{dto.Error}");
-
-                var result = dto.Data?.Result;
-                if (result is null || result.Count == 0)
-                    return TriggerResult.Ok(0); // no data => 0 work
-
-                // MVP: take the first series
-                var valueArr = result[0].Value;
-                if (valueArr is null || valueArr.Count < 2)
-                    return TriggerResult.Fail("prometheus: invalid value shape");
-
-                var strVal = valueArr[1]?.ToString();
-                if (!double.TryParse(strVal, NumberStyles.Float, CultureInfo.InvariantCulture, out var work))
-                    return TriggerResult.Fail($"prometheus: non-numeric value '{strVal}'");
-
-                return TriggerResult.Ok(work);
+                using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+                return ParseResponse(document.RootElement);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -86,20 +56,94 @@ namespace Deda.Triggers.Prometheus
             }
         }
 
+        private static TriggerResult ParseResponse(JsonElement root)
+        {
+            var status = root.TryGetProperty("status", out var statusElement)
+                ? statusElement.GetString()
+                : null;
+            if (!string.Equals(status, "success", StringComparison.OrdinalIgnoreCase))
+            {
+                var errorType = GetOptionalString(root, "errorType");
+                var error = GetOptionalString(root, "error");
+                return TriggerResult.Fail($"prometheus: {errorType}:{error}");
+            }
+
+            if (!root.TryGetProperty("data", out var data) ||
+                !data.TryGetProperty("resultType", out var resultTypeElement) ||
+                !data.TryGetProperty("result", out var result))
+            {
+                return TriggerResult.Fail("prometheus: invalid response shape");
+            }
+
+            return resultTypeElement.GetString() switch
+            {
+                "scalar" => ParseValuePair(result, "scalar"),
+                "vector" => ParseVector(result),
+                var resultType => TriggerResult.Fail($"prometheus: unsupported result type '{resultType}'"),
+            };
+        }
+
+        private static TriggerResult ParseVector(JsonElement result)
+        {
+            if (result.ValueKind != JsonValueKind.Array)
+                return TriggerResult.Fail("prometheus: vector result is not an array");
+
+            var count = result.GetArrayLength();
+            if (count == 0)
+                return TriggerResult.Ok(0);
+            if (count != 1)
+                return TriggerResult.Fail($"prometheus: ambiguous vector result contains {count} series");
+
+            var series = result[0];
+            if (!series.TryGetProperty("value", out var value))
+                return TriggerResult.Fail("prometheus: vector value missing");
+
+            return ParseValuePair(value, "vector");
+        }
+
+        private static TriggerResult ParseValuePair(JsonElement value, string resultType)
+        {
+            if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() < 2)
+                return TriggerResult.Fail($"prometheus: invalid {resultType} value shape");
+
+            var metricValue = value[1];
+            var text = metricValue.ValueKind == JsonValueKind.String
+                ? metricValue.GetString()
+                : metricValue.GetRawText();
+
+            if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var work))
+                return TriggerResult.Fail($"prometheus: non-numeric value '{text}'");
+
+            return TriggerResult.Ok(work);
+        }
+
+        private static int ReadTimeoutSeconds(ScaleConfig config) =>
+            config.TriggerConfig.TryGetValue("timeoutSeconds", out var timeout) &&
+            int.TryParse(timeout, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds) &&
+            seconds > 0
+                ? Math.Min(seconds, 120)
+                : 5;
+
         private static string BuildQueryUri(string baseUrl, string promql)
         {
             var baseUri = new Uri(baseUrl.TrimEnd('/') + "/");
-            var q = Uri.EscapeDataString(promql);
-            return new Uri(baseUri, $"api/v1/query?query={q}").ToString();
+            var query = Uri.EscapeDataString(promql);
+            return new Uri(baseUri, $"api/v1/query?query={query}").ToString();
         }
 
-        private static async Task<string> SafeRead(HttpResponseMessage resp, CancellationToken ct)
+        private static string? GetOptionalString(JsonElement element, string propertyName) =>
+            element.TryGetProperty(propertyName, out var property) ? property.GetString() : null;
+
+        private static async Task<string> SafeRead(HttpResponseMessage response, CancellationToken ct)
         {
-            try { return await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
+            try { return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { return string.Empty; }
         }
 
-        private static string Trunc(string s, int max)
-            => string.IsNullOrEmpty(s) ? s : (s.Length <= max ? s : s.Substring(0, max) + "...");
+        private static string Truncate(string value, int max) =>
+            string.IsNullOrEmpty(value)
+                ? value
+                : value.Length <= max ? value : value.Substring(0, max) + "...";
     }
 }

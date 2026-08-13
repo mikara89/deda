@@ -14,6 +14,7 @@
         public int MaxServicesPerCycle { get; init; } = 0; // 0 = no cap
         public bool JitterEnabled { get; init; } = true;
         public int MaxReconcileBackoffSeconds { get; init; } = 60;
+        public string SecretsDirectory { get; init; } = "/run/secrets";
 
         public static DedaHostOptions FromEnvironment()
         {
@@ -25,6 +26,7 @@
                 MaxServicesPerCycle = ReadInt("DEDA_MAX_SERVICES_PER_CYCLE", 0, 0, 10_000),
                 JitterEnabled = ReadBool("DEDA_JITTER_ENABLED", true),
                 MaxReconcileBackoffSeconds = ReadInt("DEDA_MAX_RECONCILE_BACKOFF_SECONDS", 60, 1, 3600),
+                SecretsDirectory = ReadString("DEDA_SECRETS_DIRECTORY", "/run/secrets"),
             };
         }
 
@@ -41,6 +43,12 @@
         {
             var s = Environment.GetEnvironmentVariable(key);
             return bool.TryParse(s, out var v) ? v : fallback;
+        }
+
+        private static string ReadString(string key, string fallback)
+        {
+            var value = Environment.GetEnvironmentVariable(key);
+            return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
         }
     }
 }

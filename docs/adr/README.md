@@ -48,3 +48,4 @@ Each ADR follows the lightweight
 | [0015](0015-named-http-clients-for-triggers.md) | Named `IHttpClientFactory` Clients per Trigger Type               | Accepted |
 | [0016](0016-timestamped-recommendation-stabilization.md) | Timestamped Desired-Replica Recommendation Stabilization | Accepted |
 | [0017](0017-resilient-reconciliation-health.md) | Resilient Reconciliation and Health-Based Readiness | Accepted |
+| [0018](0018-strict-trigger-results-and-secret-resolution.md) | Strict Trigger Results and Per-Service Secret Resolution | Accepted |

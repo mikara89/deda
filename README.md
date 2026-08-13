@@ -178,10 +178,9 @@ container, not service labels:
 | `RABBITMQ_USER_FILE` | Path to a Docker secret file containing the username |
 | `RABBITMQ_PASS_FILE` | Path to a Docker secret file containing the password |
 
-> **Known limitation — single global credential set (current default):** DEDA
-> loads one username and password at startup and uses them for every RabbitMQ
-> trigger call unless a service overrides it. If you need per-service
-> credentials today, use `trigger.credentialsSecret` (see below).
+By default, services share the global credential set. A service can override it
+with `trigger.credentialsSecret` as described below. Credentials are resolved on
+each poll so mounted-secret rotation takes effect without restarting DEDA.
 
 ---
 
@@ -223,17 +222,18 @@ those credentials only for this service's trigger calls. Services without
 `trigger.credentialsSecret` continue to use the global `RABBITMQ_USER` /
 `RABBITMQ_PASS`.
 
-> ⚠️ **Note:** `trigger.credentialsSecret` is a planned feature tracked on the
-> [roadmap](#v100--stable-release-checklist). It is not yet implemented in the
-> current MVP. The secret file approach is the intended design — contributions
-> welcome.
+The secrets directory defaults to `/run/secrets` and can be changed with
+`DEDA_SECRETS_DIRECTORY`. Secret names must be single file names; path traversal
+is rejected.
 
 ---
 
 ### Prometheus
 
-Runs an instant query against a Prometheus HTTP API and uses the first result
-value as the work signal.
+Runs an instant query against a Prometheus HTTP API. The query must return a
+scalar or exactly one vector series. Empty vectors represent zero work; vectors
+with multiple series are rejected as ambiguous instead of selecting one
+silently.
 
 | Label                    | Required | Default | Description                             |
 | ------------------------ | -------- | ------- | --------------------------------------- |
@@ -262,6 +262,7 @@ deploy:
 | ----------------------------- | ------- | ----------------------------------------------------------------------- |
 | `DEDA_POLL_SECONDS`           | `10`    | Global reconcile loop interval in seconds (1–3600).                     |
 | `DEDA_MAX_RECONCILE_BACKOFF_SECONDS` | `60` | Maximum retry delay after controller-level reconciliation failures. |
+| `DEDA_SECRETS_DIRECTORY`      | `/run/secrets` | Directory containing named per-service Docker secrets.          |
 | `DEDA_HTTP_TIMEOUT_SECONDS`   | `5`     | Default outbound HTTP timeout for triggers (1–120).                     |
 | `DEDA_LOG_DECISIONS`          | `true`  | Log every scale decision to stdout.                                     |
 | `DEDA_MAX_SERVICES_PER_CYCLE` | `0`     | Max services processed per poll cycle. `0` = no cap.                    |
@@ -382,7 +383,7 @@ grouped by area. Open an issue if you want to pick one up.
 
 #### Core correctness
 
-- [ ] **Per-service trigger credentials (`trigger.credentialsSecret`)** —
+- [x] **Per-service trigger credentials (`trigger.credentialsSecret`)** —
       implement label-driven secret resolution in `RabbitMqTriggerAdapter` so
       each service can reference a named Docker secret (`username:password`)
       instead of sharing the global credential set. See the
@@ -424,9 +425,9 @@ grouped by area. Open an issue if you want to pick one up.
       calls `ApplyDesiredReplicasAsync` only on a real change
 - [ ] **`RetryOnVersionConflictUpdateStrategy` unit tests** — assert
       retry/backoff behaviour on version conflict responses
-- [ ] **`RabbitMqTriggerAdapter` unit tests** — mock `IHttpClientFactory` and
+- [x] **`RabbitMqTriggerAdapter` unit tests** — mock `IHttpClientFactory` and
       assert metric extraction, auth header, and error paths
-- [ ] **`PrometheusTriggerAdapter` unit tests** — mock HTTP and assert PromQL
+- [x] **`PrometheusTriggerAdapter` unit tests** — mock HTTP and assert PromQL
       response parsing and empty-result handling
 - [ ] **Minimum 80 % line coverage** enforced in CI
 

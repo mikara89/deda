@@ -47,6 +47,7 @@ builder.Services.AddHttpClient("rabbitmq", c =>
 });
 
 // RabbitMQ trigger + creds provider
+builder.Services.AddSingleton<ISecretResolver>(new DockerSecretFileResolver(opts.SecretsDirectory));
 builder.Services.AddSingleton<IRabbitMqCredentialsProvider, EnvOrFileRabbitMqCredentialsProvider>();
 builder.Services.AddSingleton<ITriggerAdapter, RabbitMqTriggerAdapter>();
 
