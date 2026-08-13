@@ -1,6 +1,10 @@
 # ADR-0011: Scale-Down Delay Window Using a Ring Buffer
 
-**Date:** 2026-02-21 **Status:** Accepted
+**Date:** 2026-02-21 **Status:** Superseded by ADR-0016
+
+> Superseded by [ADR-0016](0016-timestamped-recommendation-stabilization.md),
+> which replaces fixed recent-work samples with timestamped desired-replica
+> recommendations.
 
 ## Context
 

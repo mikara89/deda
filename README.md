@@ -17,7 +17,7 @@ and more.
 
 - Scale Swarm services by RabbitMQ queue depth or any Prometheus instant query
 - Configuration entirely via Docker service labels — no config files to manage
-- Cooldown, scale-down delay window, and per-step limits prevent flapping
+- Cooldown, recommendation-based scale-down stabilization, and per-step limits prevent flapping
 - Round-robin paging across large service fleets (`DEDA_MAX_SERVICES_PER_CYCLE`)
 - Built-in `/metrics` (Prometheus text), `/health/live`, `/health/ready`
   endpoints
@@ -100,15 +100,40 @@ All labels are prefixed with `com.deda.autoscale.`.
 | `min`                   | int    | `0`     | Minimum replica count.                                                        |
 | `max`                   | int    | `50`    | Maximum replica count.                                                        |
 | `targetPerReplica`      | double | `50`    | Desired work units per replica (e.g., messages per worker).                   |
-| `activationThreshold`   | double | `5`     | Work below this value scales to `min`.                                        |
+| `activationThreshold`   | double | `5`     | Work at or below this value is inactive and recommends `min`.                 |
 | `cooldownSeconds`       | int    | `60`    | How long to block scale-down after a scale-up event.                          |
-| `scaleDownDelaySeconds` | int    | `120`   | Work must be consistently low for this window before scaling down.            |
+| `scaleDownDelaySeconds` | int    | `120`   | Timestamp-based desired-replica stabilization window for scale-down.          |
 | `stepUp`                | int    | `10`    | Maximum replicas added in a single cycle. `0` = unlimited.                    |
 | `stepDown`              | int    | `5`     | Maximum replicas removed in a single cycle. `0` = unlimited.                  |
-| `pollSeconds`           | int    | `10`    | Used to calculate the number of samples required for `scaleDownDelaySeconds`. |
+| `pollSeconds`           | int    | —        | Deprecated and ignored; use the global `DEDA_POLL_SECONDS` setting.           |
 | `trigger.type`          | string | —       | **Required.** Trigger type: `rabbitmq` or `prometheus`.                       |
 | `trigger.*`             | string | —       | Trigger-specific configuration keys (see below).                              |
 | `failsafe`              | string | `hold`  | Replica target when the trigger fails: `hold`, `min`, or `max`.               |
+
+---
+
+## Scaling behavior
+
+For a valid, active workload, DEDA recommends
+`ceil(work / targetPerReplica)`, clamps that recommendation to `min`/`max`, and
+records it with its observation time. `activationThreshold` is used only to
+identify an inactive or near-zero workload and recommend `min`; it does not
+gate proportional downscaling.
+
+Scale-up recommendations are applied immediately, subject to `stepUp`. For a
+scale-down, DEDA selects the highest desired-replica recommendation still inside
+`scaleDownDelaySeconds`, then applies `stepDown`. Recommendations expire by
+elapsed time rather than sample count, so long windows do not depend on the
+polling frequency or a fixed history capacity. Setting the window to `0`
+disables recommendation stabilization.
+
+`DEDA_POLL_SECONDS` is the authoritative reconcile-loop interval. The legacy
+`com.deda.autoscale.pollSeconds` label is retained as a deprecated compatibility
+surface but is ignored; DEDA does not schedule services independently.
+
+Successful trigger responses must contain a finite, non-negative workload.
+`NaN`, infinities, and negative values are treated as trigger failures and use
+the service's configured `failsafe` behavior.
 
 ---
 
@@ -402,8 +427,8 @@ grouped by area. Open an issue if you want to pick one up.
 
 #### Documentation
 
-- [ ] **Per-service poll interval** — implement and document
-      `com.deda.autoscale.pollSeconds` override at the service level
+- [ ] **Per-service poll interval** — replace the deprecated, currently ignored
+      `com.deda.autoscale.pollSeconds` label with real per-service scheduling
 - [ ] **Changelog** — maintain `CHANGELOG.md` with semantic versioning from
       first public release onwards
 - [ ] **Security policy** — add `SECURITY.md` with a vulnerability disclosure

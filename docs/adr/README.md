@@ -41,8 +41,9 @@ Each ADR follows the lightweight
 | [0008](0008-optimistic-concurrency-retry.md)    | Optimistic Concurrency with Exponential Backoff for Swarm Updates | Accepted |
 | [0009](0009-credentials-env-or-secrets-file.md) | Credentials via Environment Variable or Docker Secrets File       | Accepted |
 | [0010](0010-round-robin-paging.md)              | Round-Robin Paging for Large Service Fleets                       | Accepted |
-| [0011](0011-scale-down-delay-ring-buffer.md)    | Scale-Down Delay Window Using a Ring Buffer                       | Accepted |
+| [0011](0011-scale-down-delay-ring-buffer.md)    | Scale-Down Delay Window Using a Ring Buffer                       | Superseded by 0016 |
 | [0012](0012-failsafe-modes.md)                  | FailSafe Modes (Hold / Min / Max) on Trigger Failure              | Accepted |
 | [0013](0013-optional-leader-elector-seam.md)    | Optional `ILeaderElector` Seam for Future HA                      | Accepted |
 | [0014](0014-singleton-http-client-docker.md)    | Singleton `HttpClient` for Docker Engine API                      | Accepted |
 | [0015](0015-named-http-clients-for-triggers.md) | Named `IHttpClientFactory` Clients per Trigger Type               | Accepted |
+| [0016](0016-timestamped-recommendation-stabilization.md) | Timestamped Desired-Replica Recommendation Stabilization | Accepted |

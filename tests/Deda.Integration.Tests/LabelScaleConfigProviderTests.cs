@@ -117,4 +117,35 @@ public class LabelScaleConfigProviderTests
         Assert.Equal(50.0, cfg.TargetPerReplica);
         Assert.Equal(FailSafeMode.Hold, cfg.FailSafe);
     }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("not-a-number")]
+    [InlineData("3600")]
+    public void DeprecatedPollSecondsLabel_IsIgnored(string value)
+    {
+        var labels = MinimalLabels();
+        labels["com.deda.autoscale.pollSeconds"] = value;
+
+        var cfg = new LabelScaleConfigProvider().TryGetConfig(Svc(labels), out var error);
+
+        Assert.NotNull(cfg);
+        Assert.Null(error);
+        Assert.Equal(new ScaleConfig().PollSeconds, cfg.PollSeconds);
+    }
+
+    [Theory]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("-Infinity")]
+    public void NonFiniteScalingValues_ReturnNullWithError(string value)
+    {
+        var labels = MinimalLabels();
+        labels["com.deda.autoscale.targetPerReplica"] = value;
+
+        var cfg = new LabelScaleConfigProvider().TryGetConfig(Svc(labels), out var error);
+
+        Assert.Null(cfg);
+        Assert.False(string.IsNullOrWhiteSpace(error));
+    }
 }

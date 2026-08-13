@@ -36,8 +36,6 @@ namespace Deda.Config.Labels
                 StepUp = GetInt(L, Key("stepUp"), 10),
                 StepDown = GetInt(L, Key("stepDown"), 5),
 
-                PollSeconds = GetInt(L, Key("pollSeconds"), 10),
-
                 TriggerType = GetString(L, Key("trigger.type"), string.Empty),
 
                 TriggerConfig = ExtractSubtree(L, Key("trigger."))
@@ -72,10 +70,10 @@ namespace Deda.Config.Labels
             if (cfg.MaxReplicas < 0) { error = "max < 0"; return false; }
             if (cfg.MinReplicas > cfg.MaxReplicas) { error = "min > max"; return false; }
 
-            if (cfg.PollSeconds <= 0) { error = "pollSeconds <= 0"; return false; }
-
-            if (cfg.TargetPerReplica <= 0) { error = "targetPerReplica <= 0"; return false; }
-            if (cfg.ActivationThreshold < 0) { error = "activationThreshold < 0"; return false; }
+            if (!double.IsFinite(cfg.TargetPerReplica) || cfg.TargetPerReplica <= 0)
+            { error = "targetPerReplica must be finite and > 0"; return false; }
+            if (!double.IsFinite(cfg.ActivationThreshold) || cfg.ActivationThreshold < 0)
+            { error = "activationThreshold must be finite and >= 0"; return false; }
 
             if (cfg.CooldownSeconds < 0) { error = "cooldownSeconds < 0"; return false; }
             if (cfg.ScaleDownDelaySeconds < 0) { error = "scaleDownDelaySeconds < 0"; return false; }

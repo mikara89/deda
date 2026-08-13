@@ -24,6 +24,10 @@
         public int MinReplicas { get; init; } = 0;
         public int MaxReplicas { get; init; } = 50;
 
+        /// <summary>
+        /// Deprecated compatibility property. Per-service polling is not supported and this
+        /// value is ignored; DEDA_POLL_SECONDS controls the reconciliation interval.
+        /// </summary>
         public int PollSeconds { get; init; } = 5;
         public int CooldownSeconds { get; init; } = 30;
         public int ScaleDownDelaySeconds { get; init; } = 30;
@@ -43,8 +47,12 @@
 
     public sealed record TriggerResult(bool Success, double Work, string? Error = null)
     {
-        public static TriggerResult Ok(double work) => new(true, work);
+        public static TriggerResult Ok(double work) =>
+            IsValidWork(work) ? new(true, work) : Fail("invalid_work");
+
         public static TriggerResult Fail(string error) => new(false, 0, error);
+
+        public static bool IsValidWork(double work) => double.IsFinite(work) && work >= 0;
     }
 
     public sealed record ScaleDecision(
@@ -60,14 +68,28 @@
     // =========================
     // Per-service state
     // =========================
+    public sealed record ScaleRecommendation(
+        DateTimeOffset TimestampUtc,
+        int DesiredReplicas
+    );
+
     public sealed class ServiceScaleState
     {
+        private readonly List<ScaleRecommendation> _recommendationHistory = [];
+
         public int LastAppliedReplicas { get; set; }
         public DateTimeOffset? LastScaleUpUtc { get; set; }
         public DateTimeOffset? LastScaleDownUtc { get; set; }
 
-        // NEW: recent work samples (default capacity is enough for typical windows)
-        public RingBuffer<double> RecentWork { get; } = new(capacity: 60);
+        public IReadOnlyList<ScaleRecommendation> RecommendationHistory => _recommendationHistory;
+
+        public void AddRecommendation(ScaleRecommendation recommendation) =>
+            _recommendationHistory.Add(recommendation);
+
+        public void RemoveRecommendationsOlderThan(DateTimeOffset cutoffUtc) =>
+            _recommendationHistory.RemoveAll(recommendation => recommendation.TimestampUtc < cutoffUtc);
+
+        public void ClearRecommendations() => _recommendationHistory.Clear();
     }
 
     // =========================

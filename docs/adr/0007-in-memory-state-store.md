@@ -6,9 +6,9 @@
 
 The autoscaling policy (`SimpleScalePolicyMvp`) requires per-service mutable
 state that persists across reconcile cycles: the last scale-up and scale-down
-timestamps (for cooldown and delay-window logic) and a rolling window of recent
-work samples (for the `scaleDownDelaySeconds` ring buffer). This state cannot be
-derived from the Docker Engine API alone on each cycle.
+timestamps and timestamped desired-replica recommendations for scale-down
+stabilization. This state cannot be derived from the Docker Engine API alone on
+each cycle.
 
 ## Decision
 
@@ -46,6 +46,7 @@ implementations to be swapped in `Deda.Host` without touching
   Redis-backed or etcd-backed implementation can be added as a drop-in
   replacement when HA leader election is implemented (see
   [ADR-0013](0013-optional-leader-elector-seam.md)).
-- Memory usage scales linearly with the number of managed services. Each
-  `ServiceScaleState` holds a 60-slot `RingBuffer<double>` (~500 bytes); 1000
-  services ≈ 500 KB — negligible for the target deployment scale.
+- Memory usage scales with the number of managed services, their reconcile
+  frequency, and their configured stabilization windows. Recommendation entries
+  expire by elapsed time; there is no fixed sample capacity (see
+  [ADR-0016](0016-timestamped-recommendation-stabilization.md)).

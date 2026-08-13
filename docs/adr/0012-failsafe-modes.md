@@ -30,7 +30,9 @@ via the `com.deda.autoscale.failsafe` label:
 `trigger.Success == false`, then clamps the result within
 `[MinReplicas, MaxReplicas]`. The decision reason string is prefixed with
 `trigger_failed:<error>` so the failsafe activation is visible in logs and
-metrics.
+metrics. A nominally successful response containing `NaN`, infinity, or a
+negative workload is treated as an `invalid_work` trigger failure before any
+scaling arithmetic occurs.
 
 ## Alternatives Considered
 

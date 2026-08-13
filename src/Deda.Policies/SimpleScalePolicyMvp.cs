@@ -8,7 +8,7 @@ namespace Deda.Policies
         {
             int current = service.CurrentReplicas;
 
-            if (!trigger.Success)
+            if (!trigger.Success || !TriggerResult.IsValidWork(trigger.Work))
             {
                 int desiredFail = cfg.FailSafe switch
                 {
@@ -18,18 +18,21 @@ namespace Deda.Policies
                 };
 
                 desiredFail = Clamp(desiredFail, cfg.MinReplicas, cfg.MaxReplicas);
+                string error = trigger.Success ? "invalid_work" : trigger.Error ?? "unknown";
 
                 return new ScaleDecision(service.ServiceId, service.Name, current, desiredFail, 0,
-                    $"trigger_failed:{trigger.Error}", nowUtc);
+                    $"trigger_failed:{error}", nowUtc);
             }
 
             // Base desired
             int raw =
                 trigger.Work <= cfg.ActivationThreshold
                     ? cfg.MinReplicas
-                    : (int)Math.Ceiling(trigger.Work / cfg.TargetPerReplica);
+                    : CalculateProportionalRecommendation(trigger.Work, cfg.TargetPerReplica);
 
             int bounded = Clamp(raw, cfg.MinReplicas, cfg.MaxReplicas);
+
+            RecordRecommendation(state, bounded, nowUtc, cfg.ScaleDownDelaySeconds);
 
             // Cooldown: block scale-down shortly after scale-up
             int stabilized = bounded;
@@ -44,49 +47,59 @@ namespace Deda.Policies
                 }
             }
 
-            // Scale-down delay window: only allow downscale if sustained low demand
-            bool blockedByDelayWindow = false;
+            // Scale-down stabilization: prefer the highest recent desired recommendation.
+            bool blockedByStabilization = false;
             if (!blockedByCooldown && stabilized < current)
             {
-                int required = RequiredSamples(cfg.PollSeconds, cfg.ScaleDownDelaySeconds);
-                if (!HasSustainedLowDemand(state, required, cfg.ActivationThreshold))
-                {
-                    stabilized = current;
-                    blockedByDelayWindow = true;
-                }
+                int highestRecentRecommendation = state.RecommendationHistory
+                    .Max(recommendation => recommendation.DesiredReplicas);
+
+                // Recommendation history must never cause an otherwise-downscale decision
+                // to scale up. External changes may make an old recommendation exceed current.
+                stabilized = Math.Max(bounded, Math.Min(current, highestRecentRecommendation));
+                blockedByStabilization = stabilized > bounded;
             }
 
             // Step limits
-            int final = ApplyStepLimits(current, stabilized, cfg);
+            // Absolute safety bounds override gradual step limits when the current
+            // replica count is already outside the configured range.
+            int final = Clamp(
+                ApplyStepLimits(current, stabilized, cfg),
+                cfg.MinReplicas,
+                cfg.MaxReplicas);
 
             string reason =
                 $"work={trigger.Work:0.##} raw={raw} bounded={bounded} stabilized={stabilized} final={final} " +
-                $"cooldownBlocked={blockedByCooldown} delayBlocked={blockedByDelayWindow} " +
-                $"needSamples={RequiredSamples(cfg.PollSeconds, cfg.ScaleDownDelaySeconds)} samplesHave={state.RecentWork.Count} trig={cfg.TriggerType}";
+                $"cooldownBlocked={blockedByCooldown} stabilizationBlocked={blockedByStabilization} " +
+                $"recommendations={state.RecommendationHistory.Count} windowSeconds={cfg.ScaleDownDelaySeconds} trig={cfg.TriggerType}";
 
 
             return new ScaleDecision(service.ServiceId, service.Name, current, final, trigger.Work, reason, nowUtc);
         }
 
-        private static int RequiredSamples(int pollSeconds, int windowSeconds)
+        private static void RecordRecommendation(
+            ServiceScaleState state,
+            int desiredReplicas,
+            DateTimeOffset nowUtc,
+            int windowSeconds)
         {
-            if (pollSeconds <= 0) pollSeconds = 1;
-            if (windowSeconds <= 0) return 1;
-            return Math.Max(1, (int)Math.Ceiling(windowSeconds / (double)pollSeconds));
+            if (windowSeconds <= 0)
+            {
+                state.ClearRecommendations();
+            }
+            else
+            {
+                var cutoffUtc = nowUtc - TimeSpan.FromSeconds(windowSeconds);
+                state.RemoveRecommendationsOlderThan(cutoffUtc);
+            }
+
+            state.AddRecommendation(new ScaleRecommendation(nowUtc, desiredReplicas));
         }
 
-        private static bool HasSustainedLowDemand(ServiceScaleState state, int requiredSamples, double threshold)
+        private static int CalculateProportionalRecommendation(double work, double targetPerReplica)
         {
-            var samples = state.RecentWork.Snapshot();
-            if (samples.Count < requiredSamples) return false;
-
-            // Check last N samples are <= threshold
-            for (int i = samples.Count - requiredSamples; i < samples.Count; i++)
-            {
-                if (samples[i] > threshold)
-                    return false;
-            }
-            return true;
+            double recommendation = Math.Ceiling(work / targetPerReplica);
+            return recommendation >= int.MaxValue ? int.MaxValue : (int)recommendation;
         }
 
         private static int Clamp(int v, int min, int max)

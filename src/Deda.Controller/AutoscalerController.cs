@@ -94,9 +94,6 @@ namespace Deda.Controller
 
                     var trigger = await adapter.GetWorkAsync(svc, cfg, ct).ConfigureAwait(false);
 
-                    if (trigger.Success)
-                        state.RecentWork.Add(trigger.Work);
-
                     var decision = _policy.Decide(svc, cfg, trigger, state, now);
                     _telemetry.RecordDecision(decision);
 

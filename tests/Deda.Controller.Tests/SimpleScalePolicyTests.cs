@@ -1,11 +1,11 @@
-﻿using Deda.Core;
+using Deda.Core;
 using Deda.Policies;
 
 namespace Deda.Controller.Tests;
 
 public class SimpleScalePolicyTests
 {
-    private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
+    private static readonly DateTimeOffset Now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     private static ServiceRef Svc(int currentReplicas) =>
         new("svc-1", "my-service", currentReplicas,
@@ -15,7 +15,7 @@ public class SimpleScalePolicyTests
         int min = 0, int max = 20,
         double targetPerReplica = 10, double activationThreshold = 2,
         int cooldownSeconds = 60, int scaleDownDelaySeconds = 30,
-        int stepUp = 10, int stepDown = 5, int pollSeconds = 5) =>
+        int stepUp = 10, int stepDown = 5) =>
         new()
         {
             Enabled = true,
@@ -27,139 +27,266 @@ public class SimpleScalePolicyTests
             ScaleDownDelaySeconds = scaleDownDelaySeconds,
             StepUp = stepUp,
             StepDown = stepDown,
-            PollSeconds = pollSeconds,
             TriggerType = "fake",
         };
 
-    private static ServiceScaleState EmptyState() => new();
-
     [Fact]
-    public void ScaleUp_WorkExceedsTarget_IncreasesReplicas()
+    public void ScaleUp_WorkExceedsTarget_IncreasesReplicasImmediately()
     {
         var policy = new SimpleScalePolicyMvp();
-        // 100 work / 10 per replica = 10 desired
-        var decision = policy.Decide(Svc(1), Cfg(), TriggerResult.Ok(100), EmptyState(), Now);
+
+        var decision = policy.Decide(Svc(1), Cfg(), TriggerResult.Ok(100), new(), Now);
 
         Assert.Equal(10, decision.DesiredReplicas);
     }
 
     [Fact]
-    public void ScaleDown_LowWorkSustained_DecreasesReplicas()
+    public void ProportionalScaleDown_EventuallyReachesCalculatedReplicaCount()
     {
         var policy = new SimpleScalePolicyMvp();
-        var cfg = Cfg(min: 1, scaleDownDelaySeconds: 10, pollSeconds: 5); // requires 2 samples
+        var cfg = Cfg(scaleDownDelaySeconds: 30, stepDown: 0);
+        var state = new ServiceScaleState();
 
-        var state = new ServiceScaleState { LastAppliedReplicas = 5 };
-        // Add enough low-demand samples to satisfy the delay window
-        state.RecentWork.Add(0);
-        state.RecentWork.Add(0);
-        state.RecentWork.Add(0);
+        policy.Decide(Svc(10), cfg, TriggerResult.Ok(100), state, Now);
+        var held = policy.Decide(Svc(10), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(10));
+        var released = policy.Decide(Svc(10), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(31));
 
-        var decision = policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now);
+        Assert.Equal(10, held.DesiredReplicas);
+        Assert.Equal(5, released.DesiredReplicas);
+    }
 
-        Assert.Equal(1, decision.DesiredReplicas); // min replicas
+    [Fact]
+    public void ScaleDown_UsesHighestRecommendationInsideWindow()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(scaleDownDelaySeconds: 30, stepDown: 0);
+        var state = new ServiceScaleState();
+
+        policy.Decide(Svc(10), cfg, TriggerResult.Ok(100), state, Now);
+        var eight = policy.Decide(Svc(10), cfg, TriggerResult.Ok(80), state, Now.AddSeconds(10));
+        var five = policy.Decide(Svc(10), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(20));
+
+        Assert.Equal(10, eight.DesiredReplicas);
+        Assert.Equal(10, five.DesiredReplicas);
+        Assert.Contains("stabilizationBlocked=True", five.Reason);
+    }
+
+    [Fact]
+    public void ScaleDown_ProgressesAsOlderRecommendationsExpire()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(scaleDownDelaySeconds: 30, stepDown: 0);
+        var state = new ServiceScaleState();
+
+        policy.Decide(Svc(10), cfg, TriggerResult.Ok(100), state, Now);
+        policy.Decide(Svc(10), cfg, TriggerResult.Ok(80), state, Now.AddSeconds(10));
+        policy.Decide(Svc(10), cfg, TriggerResult.Ok(60), state, Now.AddSeconds(20));
+
+        var toEight = policy.Decide(Svc(10), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(31));
+        var toSix = policy.Decide(Svc(8), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(41));
+        var toFive = policy.Decide(Svc(6), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(51));
+
+        Assert.Equal(8, toEight.DesiredReplicas);
+        Assert.Equal(6, toSix.DesiredReplicas);
+        Assert.Equal(5, toFive.DesiredReplicas);
+    }
+
+    [Fact]
+    public void RecommendationAtWindowBoundary_IsRetainedUntilItExpires()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(scaleDownDelaySeconds: 30, stepDown: 0);
+        var state = new ServiceScaleState();
+
+        policy.Decide(Svc(10), cfg, TriggerResult.Ok(100), state, Now);
+        var atBoundary = policy.Decide(Svc(10), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(30));
+        var afterBoundary = policy.Decide(Svc(10), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(31));
+
+        Assert.Equal(10, atBoundary.DesiredReplicas);
+        Assert.Equal(5, afterBoundary.DesiredReplicas);
+        Assert.DoesNotContain(state.RecommendationHistory, recommendation => recommendation.TimestampUtc == Now);
+    }
+
+    [Fact]
+    public void LongStabilizationWindow_IsNotLimitedToSixtyRecommendations()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(scaleDownDelaySeconds: 30 * 60, stepDown: 0);
+        var state = new ServiceScaleState();
+
+        policy.Decide(Svc(10), cfg, TriggerResult.Ok(100), state, Now);
+        ScaleDecision decision = null!;
+        for (var seconds = 10; seconds < 30 * 60; seconds += 10)
+        {
+            decision = policy.Decide(
+                Svc(10), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(seconds));
+        }
+
+        Assert.Equal(10, decision.DesiredReplicas);
+        Assert.True(state.RecommendationHistory.Count > 60);
+
+        var released = policy.Decide(
+            Svc(10), cfg, TriggerResult.Ok(50), state, Now.AddSeconds((30 * 60) + 1));
+        Assert.Equal(5, released.DesiredReplicas);
     }
 
     [Fact]
     public void ScaleDown_BlockedByCooldown_HoldsCurrentReplicas()
     {
         var policy = new SimpleScalePolicyMvp();
-        var cfg = Cfg(cooldownSeconds: 60);
-        var state = new ServiceScaleState
-        {
-            LastScaleUpUtc = Now.AddSeconds(-10) // only 10s ago, inside 60s cooldown
-        };
-        // add low-demand samples
-        state.RecentWork.Add(0);
-        state.RecentWork.Add(0);
+        var cfg = Cfg(cooldownSeconds: 60, scaleDownDelaySeconds: 0, stepDown: 0);
+        var state = new ServiceScaleState { LastScaleUpUtc = Now.AddSeconds(-10) };
 
         var decision = policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now);
 
-        Assert.Equal(5, decision.DesiredReplicas); // held
+        Assert.Equal(5, decision.DesiredReplicas);
+        Assert.Contains("cooldownBlocked=True", decision.Reason);
+    }
+
+    [Fact]
+    public void ActivationThreshold_ScalesInactiveWorkloadToMin()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(min: 2, activationThreshold: 5, scaleDownDelaySeconds: 0, stepDown: 0);
+
+        var decision = policy.Decide(Svc(5), cfg, TriggerResult.Ok(1), new(), Now);
+
+        Assert.Equal(2, decision.DesiredReplicas);
+    }
+
+    [Fact]
+    public void ActivationThreshold_DoesNotBlockProportionalScaleDown()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(activationThreshold: 2, scaleDownDelaySeconds: 0, stepDown: 0);
+
+        var decision = policy.Decide(Svc(10), cfg, TriggerResult.Ok(50), new(), Now);
+
+        Assert.Equal(5, decision.DesiredReplicas);
     }
 
     [Fact]
     public void StepUp_LimitsReplicaIncreasePerCycle()
     {
         var policy = new SimpleScalePolicyMvp();
-        var cfg = Cfg(stepUp: 2); // max +2 per cycle
-        // desired would be 10, but step limits to current+2
-        var decision = policy.Decide(Svc(1), cfg, TriggerResult.Ok(100), EmptyState(), Now);
 
-        Assert.Equal(3, decision.DesiredReplicas); // 1 + 2
+        var decision = policy.Decide(Svc(1), Cfg(stepUp: 2), TriggerResult.Ok(100), new(), Now);
+
+        Assert.Equal(3, decision.DesiredReplicas);
     }
 
     [Fact]
-    public void StepDown_LimitsReplicaDecreasePerCycle()
+    public void StepDown_LimitsReplicaDecreaseAfterStabilization()
     {
         var policy = new SimpleScalePolicyMvp();
-        var cfg = Cfg(min: 0, stepDown: 2, scaleDownDelaySeconds: 0, pollSeconds: 5);
-        var state = new ServiceScaleState();
-        // Add enough samples to pass delay window
-        state.RecentWork.Add(0); state.RecentWork.Add(0); state.RecentWork.Add(0);
+        var cfg = Cfg(stepDown: 2, scaleDownDelaySeconds: 0);
 
-        var decision = policy.Decide(Svc(10), cfg, TriggerResult.Ok(0), state, Now);
+        var decision = policy.Decide(Svc(10), cfg, TriggerResult.Ok(0), new(), Now);
 
-        Assert.Equal(8, decision.DesiredReplicas); // 10 - 2
-    }
-
-    [Fact]
-    public void BelowActivationThreshold_ScalesToMin()
-    {
-        var policy = new SimpleScalePolicyMvp();
-        var cfg = Cfg(min: 2, activationThreshold: 5, scaleDownDelaySeconds: 0);
-        var state = new ServiceScaleState();
-        state.RecentWork.Add(1); state.RecentWork.Add(1);
-
-        var decision = policy.Decide(Svc(5), cfg, TriggerResult.Ok(1), state, Now);
-
-        // raw = min because work <= activation threshold
-        Assert.True(decision.DesiredReplicas <= 2);
-    }
-
-    [Fact]
-    public void FailedTrigger_FailSafeHold_HoldsCurrentReplicas()
-    {
-        var policy = new SimpleScalePolicyMvp();
-        var cfg = Cfg() with { FailSafe = FailSafeMode.Hold };
-
-        var decision = policy.Decide(Svc(7), cfg, TriggerResult.Fail("timeout"), EmptyState(), Now);
-
-        Assert.Equal(7, decision.DesiredReplicas);
-    }
-
-    [Fact]
-    public void FailedTrigger_FailSafeMin_ScalesToMin()
-    {
-        var policy = new SimpleScalePolicyMvp();
-        var cfg = Cfg(min: 1) with { FailSafe = FailSafeMode.Min };
-
-        var decision = policy.Decide(Svc(7), cfg, TriggerResult.Fail("timeout"), EmptyState(), Now);
-
-        Assert.Equal(1, decision.DesiredReplicas);
+        Assert.Equal(8, decision.DesiredReplicas);
     }
 
     [Fact]
     public void DesiredReplicas_NeverExceedsMax()
     {
         var policy = new SimpleScalePolicyMvp();
-        var cfg = Cfg(max: 5, stepUp: 0); // unlimited step, cap at 5
 
-        var decision = policy.Decide(Svc(1), cfg, TriggerResult.Ok(9999), EmptyState(), Now);
+        var decision = policy.Decide(
+            Svc(1), Cfg(max: 5, stepUp: 0), TriggerResult.Ok(9999), new(), Now);
 
         Assert.Equal(5, decision.DesiredReplicas);
     }
 
     [Fact]
-    public void DesiredReplicas_NeverBelowMin()
+    public void VeryLargeFiniteWork_SaturatesAtMaxWithoutOverflow()
     {
         var policy = new SimpleScalePolicyMvp();
-        var cfg = Cfg(min: 3, scaleDownDelaySeconds: 0);
-        var state = new ServiceScaleState();
-        state.RecentWork.Add(0); state.RecentWork.Add(0);
 
-        var decision = policy.Decide(Svc(3), cfg, TriggerResult.Ok(0), state, Now);
+        var decision = policy.Decide(
+            Svc(1), Cfg(max: 20, stepUp: 0), TriggerResult.Ok(double.MaxValue), new(), Now);
 
-        Assert.True(decision.DesiredReplicas >= 3);
+        Assert.Equal(20, decision.DesiredReplicas);
     }
+
+    [Fact]
+    public void DesiredReplicas_NeverFallsBelowMin()
+    {
+        var policy = new SimpleScalePolicyMvp();
+
+        var decision = policy.Decide(
+            Svc(10), Cfg(min: 3, scaleDownDelaySeconds: 0, stepDown: 0),
+            TriggerResult.Ok(0), new(), Now);
+
+        Assert.Equal(3, decision.DesiredReplicas);
+    }
+
+    [Fact]
+    public void CurrentBelowMin_StepUpDoesNotPreventReachingMin()
+    {
+        var policy = new SimpleScalePolicyMvp();
+
+        var decision = policy.Decide(
+            Svc(0), Cfg(min: 5, stepUp: 2), TriggerResult.Ok(0), new(), Now);
+
+        Assert.Equal(5, decision.DesiredReplicas);
+    }
+
+    [Fact]
+    public void CurrentAboveMax_StepDownDoesNotPreventReachingMax()
+    {
+        var policy = new SimpleScalePolicyMvp();
+
+        var decision = policy.Decide(
+            Svc(30), Cfg(max: 20, scaleDownDelaySeconds: 0, stepDown: 5),
+            TriggerResult.Ok(200), new(), Now);
+
+        Assert.Equal(20, decision.DesiredReplicas);
+    }
+
+    [Theory]
+    [InlineData(FailSafeMode.Hold, 7)]
+    [InlineData(FailSafeMode.Min, 1)]
+    [InlineData(FailSafeMode.Max, 20)]
+    public void FailedTrigger_AppliesConfiguredFailSafe(FailSafeMode failSafe, int expected)
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(min: 1) with { FailSafe = failSafe };
+
+        var decision = policy.Decide(Svc(7), cfg, TriggerResult.Fail("timeout"), new(), Now);
+
+        Assert.Equal(expected, decision.DesiredReplicas);
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidWorkValues))]
+    public void InvalidSuccessfulTrigger_AppliesFailSafeWithoutRecordingRecommendation(double work)
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var state = new ServiceScaleState();
+
+        var decision = policy.Decide(
+            Svc(7), Cfg(), new TriggerResult(true, work), state, Now);
+
+        Assert.Equal(7, decision.DesiredReplicas);
+        Assert.Empty(state.RecommendationHistory);
+        Assert.Equal("trigger_failed:invalid_work", decision.Reason);
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidWorkValues))]
+    public void TriggerResultOk_ConvertsInvalidWorkToFailure(double work)
+    {
+        var result = TriggerResult.Ok(work);
+
+        Assert.False(result.Success);
+        Assert.Equal("invalid_work", result.Error);
+    }
+
+    public static TheoryData<double> InvalidWorkValues => new()
+    {
+        double.NaN,
+        double.PositiveInfinity,
+        double.NegativeInfinity,
+        -1,
+    };
 }
