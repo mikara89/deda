@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0 (unreleased)
+
+- Fail closed on malformed explicit autoscaling labels and invalid failsafe values.
+- Add operator-owned RabbitMQ credential bindings, per-attempt HA mutation guards, lifecycle telemetry cleanup, bounded reconciliation, cycle timeouts, and readiness freshness.
+- Add direct Docker socket rendering to `docker deda install --docker-access direct`.
+
 All notable changes to DEDA are documented here. Releases follow
 [Semantic Versioning](https://semver.org/) and this file follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).

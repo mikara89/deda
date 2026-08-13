@@ -15,6 +15,11 @@
         public bool JitterEnabled { get; init; } = true;
         public int MaxReconcileBackoffSeconds { get; init; } = 60;
         public string SecretsDirectory { get; init; } = "/run/secrets";
+        public string? CredentialPolicyFile { get; init; }
+        public bool AllowLegacyCredentialsSecret { get; init; }
+        public int MaxConcurrentServices { get; init; } = 8;
+        public int ReconcileTimeoutSeconds { get; init; } = 120;
+        public int ReadinessMaxAgeSeconds { get; init; } = 60;
         public int HttpPort { get; init; } = 8080;
         public string? RedisConnectionString { get; init; }
         public string LeaderLockKey { get; init; } = "deda:leader";
@@ -33,6 +38,11 @@
                 JitterEnabled = ReadBool("DEDA_JITTER_ENABLED", true),
                 MaxReconcileBackoffSeconds = ReadInt("DEDA_MAX_RECONCILE_BACKOFF_SECONDS", 60, 1, 3600),
                 SecretsDirectory = ReadString("DEDA_SECRETS_DIRECTORY", "/run/secrets"),
+                CredentialPolicyFile = ReadOptionalString("DEDA_CREDENTIAL_POLICY_FILE"),
+                AllowLegacyCredentialsSecret = ReadBool("DEDA_ALLOW_LEGACY_CREDENTIALS_SECRET", false),
+                MaxConcurrentServices = ReadInt("DEDA_MAX_CONCURRENT_SERVICES", 8, 1, 256),
+                ReconcileTimeoutSeconds = ReadInt("DEDA_RECONCILE_TIMEOUT_SECONDS", 120, 1, 3600),
+                ReadinessMaxAgeSeconds = ReadInt("DEDA_READINESS_MAX_AGE_SECONDS", 60, 1, 3600),
                 HttpPort = ReadInt("DEDA_HTTP_PORT", 8080, 1, 65535),
                 RedisConnectionString = ReadOptionalString("DEDA_REDIS_CONNECTION"),
                 LeaderLockKey = ReadString("DEDA_LEADER_LOCK_KEY", "deda:leader"),

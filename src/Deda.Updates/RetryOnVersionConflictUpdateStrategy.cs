@@ -15,11 +15,13 @@ namespace Deda.Updates
     public sealed class RetryOnVersionConflictUpdateStrategy : IServiceUpdateStrategy
     {
         private readonly RetryOptions _options;
+        private readonly IMutationGuard _guard;
         private readonly Random _rng = new();
 
-        public RetryOnVersionConflictUpdateStrategy(RetryOptions? options = null)
+        public RetryOnVersionConflictUpdateStrategy(RetryOptions? options = null, IMutationGuard? guard = null)
         {
             _options = options ?? RetryOptions.Default;
+            _guard = guard ?? new NoOpMutationGuard();
         }
 
         public async Task ApplyDesiredReplicasAsync(
@@ -37,6 +39,9 @@ namespace Deda.Updates
             for (int attempt = 1; attempt <= _options.MaxAttempts; attempt++)
             {
                 ct.ThrowIfCancellationRequested();
+                // This must happen inside the retry loop: a version conflict can
+                // delay the next mutation long enough for a lease to be lost.
+                await _guard.EnsureCanMutateAsync(ct).ConfigureAwait(false);
 
                 try
                 {

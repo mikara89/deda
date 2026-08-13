@@ -119,6 +119,29 @@ public class LabelScaleConfigProviderTests
     }
 
     [Theory]
+    [InlineData("com.deda.autoscale.max", "abc")]
+    [InlineData("com.deda.autoscale.targetPerReplica", "NaN")]
+    [InlineData("com.deda.autoscale.cooldownSeconds", "5O")]
+    public void ExplicitMalformedScalingValue_IsRejected(string label, string value)
+    {
+        var labels = MinimalLabels();
+        labels[label] = value;
+        var cfg = new LabelScaleConfigProvider().TryGetConfig(Svc(labels), out var error);
+        Assert.Null(cfg);
+        Assert.False(string.IsNullOrWhiteSpace(error));
+    }
+
+    [Fact]
+    public void InvalidFailsafe_IsRejected()
+    {
+        var labels = MinimalLabels();
+        labels["com.deda.autoscale.failsafe"] = "mx";
+        var cfg = new LabelScaleConfigProvider().TryGetConfig(Svc(labels), out var error);
+        Assert.Null(cfg);
+        Assert.Contains("failsafe", error);
+    }
+
+    [Theory]
     [InlineData("0")]
     [InlineData("not-a-number")]
     [InlineData("3600")]

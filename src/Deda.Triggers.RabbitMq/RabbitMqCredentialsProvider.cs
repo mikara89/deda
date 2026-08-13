@@ -1,4 +1,5 @@
 using Deda.Core;
+using System.Text.Json;
 
 namespace Deda.Triggers.RabbitMq
 {
@@ -12,6 +13,29 @@ namespace Deda.Triggers.RabbitMq
     public interface ISecretResolver
     {
         string Resolve(string secretName);
+    }
+
+    public sealed record RabbitMqCredentialBinding(string Secret, IReadOnlySet<string> AllowedHosts, IReadOnlySet<string> AllowedServices);
+
+    public sealed class RabbitMqCredentialPolicy
+    {
+        private readonly IReadOnlyDictionary<string, RabbitMqCredentialBinding> _bindings;
+        public RabbitMqCredentialPolicy(IReadOnlyDictionary<string, RabbitMqCredentialBinding>? bindings = null) => _bindings = bindings ?? new Dictionary<string, RabbitMqCredentialBinding>(StringComparer.OrdinalIgnoreCase);
+        public static RabbitMqCredentialPolicy FromJsonFile(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return new();
+            var document = JsonSerializer.Deserialize<Dictionary<string, CredentialPolicyDocument>>(File.ReadAllText(path)) ?? throw new InvalidOperationException("Credential policy file is empty or invalid.");
+            return new RabbitMqCredentialPolicy(document.ToDictionary(entry => entry.Key, entry => new RabbitMqCredentialBinding(entry.Value.Secret ?? throw new InvalidOperationException($"Credential '{entry.Key}' has no secret."), new HashSet<string>(entry.Value.AllowedHosts ?? [], StringComparer.OrdinalIgnoreCase), new HashSet<string>(entry.Value.AllowedServices ?? [], StringComparer.OrdinalIgnoreCase)), StringComparer.OrdinalIgnoreCase));
+        }
+        public RabbitMqCredentialBinding Resolve(ServiceRef service, string reference, string url)
+        {
+            if (!_bindings.TryGetValue(reference, out var binding)) throw new InvalidOperationException($"RabbitMQ credential reference '{reference}' is not defined by the operator policy.");
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint) || string.IsNullOrWhiteSpace(endpoint.Host)) throw new InvalidOperationException("RabbitMQ trigger.url must be an absolute URL when credentialsRef is used.");
+            if (!binding.AllowedHosts.Contains(endpoint.Host)) throw new InvalidOperationException($"RabbitMQ endpoint host '{endpoint.Host}' is not allowed for credential reference '{reference}'.");
+            if (binding.AllowedServices.Count > 0 && !binding.AllowedServices.Contains(service.Name) && !binding.AllowedServices.Contains(service.ServiceId)) throw new InvalidOperationException($"Service '{service.Name}' is not permitted to use credential reference '{reference}'.");
+            return binding;
+        }
+        private sealed class CredentialPolicyDocument { public string? Secret { get; init; } public string[]? AllowedHosts { get; init; } public string[]? AllowedServices { get; init; } }
     }
 
     public sealed class DockerSecretFileResolver : ISecretResolver
@@ -53,17 +77,28 @@ namespace Deda.Triggers.RabbitMq
     public sealed class EnvOrFileRabbitMqCredentialsProvider : IRabbitMqCredentialsProvider
     {
         private readonly ISecretResolver _secretResolver;
+        private readonly RabbitMqCredentialPolicy _policy;
+        private readonly bool _allowLegacyServiceSecret;
 
-        public EnvOrFileRabbitMqCredentialsProvider(ISecretResolver secretResolver)
+        public EnvOrFileRabbitMqCredentialsProvider(ISecretResolver secretResolver, RabbitMqCredentialPolicy? policy = null, bool allowLegacyServiceSecret = true)
         {
             _secretResolver = secretResolver;
+            _policy = policy ?? new RabbitMqCredentialPolicy();
+            _allowLegacyServiceSecret = allowLegacyServiceSecret;
         }
 
         public RabbitMqCredentials Get(ServiceRef service, ScaleConfig config)
         {
+            if (config.TriggerConfig.TryGetValue("credentialsRef", out var reference) && !string.IsNullOrWhiteSpace(reference))
+            {
+                var url = config.TriggerConfig.GetValueOrDefault("url") ?? throw new InvalidOperationException("RabbitMQ trigger.url is required with credentialsRef.");
+                var binding = _policy.Resolve(service, reference.Trim(), url);
+                return ParseSecret(_secretResolver.Resolve(binding.Secret), binding.Secret);
+            }
             if (config.TriggerConfig.TryGetValue("credentialsSecret", out var secretName) &&
                 !string.IsNullOrWhiteSpace(secretName))
             {
+                if (!_allowLegacyServiceSecret) throw new InvalidOperationException("trigger.credentialsSecret is disabled; configure an operator credential policy and use trigger.credentialsRef.");
                 return ParseSecret(_secretResolver.Resolve(secretName.Trim()), secretName.Trim());
             }
 

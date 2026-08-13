@@ -5,7 +5,8 @@ namespace Deda.Controller
 {
     public sealed record ReconcileLoopOptions(
         TimeSpan PollInterval,
-        TimeSpan MaxFailureBackoff);
+        TimeSpan MaxFailureBackoff,
+        TimeSpan? CycleTimeout = null);
 
     public sealed class ResilientReconcileRunner
     {
@@ -38,7 +39,10 @@ namespace Deda.Controller
 
             try
             {
-                await _controller.ReconcileOnceAsync(ct).ConfigureAwait(false);
+                using var cycleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                if (_options.CycleTimeout is { } timeout)
+                    cycleCts.CancelAfter(timeout);
+                await _controller.ReconcileOnceAsync(cycleCts?.Token ?? ct).ConfigureAwait(false);
                 _consecutiveFailures = 0;
                 _health.RecordSuccess(_timeProvider.GetUtcNow());
                 _telemetry.RecordReconcile(Stopwatch.GetElapsedTime(started), success: true);

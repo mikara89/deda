@@ -4,14 +4,23 @@ namespace Deda.Controller
 {
     public sealed class ReconciliationHealthState : IReconciliationHealth
     {
+        private readonly TimeProvider _timeProvider;
+        private readonly TimeSpan? _maxSuccessAge;
         private readonly object _gate = new();
         private ReconciliationHealthSnapshot _snapshot = new(null, null, null, null);
+
+        public ReconciliationHealthState(TimeProvider? timeProvider = null, TimeSpan? maxSuccessAge = null)
+        {
+            _timeProvider = timeProvider ?? TimeProvider.System;
+            _maxSuccessAge = maxSuccessAge;
+        }
 
         public ReconciliationHealthSnapshot Snapshot()
         {
             lock (_gate)
             {
-                return _snapshot;
+                var fresh = _maxSuccessAge is null || (_snapshot.LastSuccessfulUtc is { } success && _timeProvider.GetUtcNow() - success <= _maxSuccessAge.Value);
+                return _snapshot with { IsReady = _snapshot.IsReady && fresh };
             }
         }
 
