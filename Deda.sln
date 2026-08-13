@@ -45,6 +45,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Docker.Deda.Cli", "src\tool
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Deda.Triggers.Tests", "tests\Deda.Triggers.Tests\Deda.Triggers.Tests.csproj", "{BF6757BE-7F73-4795-8306-D20E6C2E347D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Deda.Swarm.Tests", "tests\Deda.Swarm.Tests\Deda.Swarm.Tests.csproj", "{5B1859A8-E61D-4E94-BC62-A7C3006BB589}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -259,6 +261,18 @@ Global
 		{BF6757BE-7F73-4795-8306-D20E6C2E347D}.Release|x64.Build.0 = Release|Any CPU
 		{BF6757BE-7F73-4795-8306-D20E6C2E347D}.Release|x86.ActiveCfg = Release|Any CPU
 		{BF6757BE-7F73-4795-8306-D20E6C2E347D}.Release|x86.Build.0 = Release|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Debug|x64.Build.0 = Debug|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Debug|x86.Build.0 = Debug|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Release|x64.ActiveCfg = Release|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Release|x64.Build.0 = Release|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Release|x86.ActiveCfg = Release|Any CPU
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -283,6 +297,7 @@ Global
 		{727D7FB6-45E6-4A3B-8ECC-48C79983AF5C} = {02246D07-300E-4E0B-AA31-DFCC167CDAD7}
 		{85D7CD03-34E4-4663-B2BE-85A3175567C5} = {727D7FB6-45E6-4A3B-8ECC-48C79983AF5C}
 		{BF6757BE-7F73-4795-8306-D20E6C2E347D} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{5B1859A8-E61D-4E94-BC62-A7C3006BB589} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {827A0F0E-FD18-40AE-AEEF-D77DFC881BC3}

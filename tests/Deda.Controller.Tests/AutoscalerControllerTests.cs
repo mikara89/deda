@@ -160,6 +160,40 @@ public sealed class AutoscalerControllerTests
         Assert.Single(fixture.Telemetry.Decisions);
     }
 
+    [Fact]
+    public async Task Reconcile_GlobalServicesAreIgnored()
+    {
+        var fixture = new Fixture();
+        var adapter = new FakeAdapter((_, _, _) => Task.FromResult(TriggerResult.Ok(0)));
+        fixture.Registry.Adapter = adapter;
+        fixture.Swarm.Services =
+        [
+            Service("global") with { Mode = SwarmServiceMode.Global },
+            Service("replicated"),
+        ];
+
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        Assert.Equal(1, adapter.CallCount);
+        Assert.Single(fixture.Telemetry.Decisions);
+        Assert.Equal("replicated", fixture.Telemetry.Decisions[0].ServiceName);
+    }
+
+    [Fact]
+    public async Task Reconcile_MaxServicesPerCycleLimitsProcessedPage()
+    {
+        var fixture = new Fixture(new HostOptions(10, 2, false));
+        fixture.Registry.Adapter = new FakeAdapter(
+            (_, _, _) => Task.FromResult(TriggerResult.Ok(0)));
+        fixture.Swarm.Services = Enumerable.Range(1, 5)
+            .Select(index => Service($"service-{index}"))
+            .ToList();
+
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        Assert.Equal(2, fixture.Telemetry.Decisions.Count);
+    }
+
     private static ServiceRef Service(string name, int replicas = 1) =>
         new($"id-{name}", name, replicas, new Dictionary<string, string>(), 1, SwarmServiceMode.Replicated);
 
@@ -182,7 +216,7 @@ public sealed class AutoscalerControllerTests
         public RecordingUpdateStrategy Updates { get; } = new();
         public AutoscalerController Controller { get; }
 
-        public Fixture()
+        public Fixture(HostOptions? hostOptions = null)
         {
             Controller = new AutoscalerController(
                 Swarm,
@@ -192,7 +226,7 @@ public sealed class AutoscalerControllerTests
                 StateStore,
                 Telemetry,
                 Updates,
-                new HostOptions(10, 0, false));
+                hostOptions ?? new HostOptions(10, 0, false));
         }
     }
 
@@ -253,10 +287,16 @@ public sealed class AutoscalerControllerTests
 
         public string Type => "fake";
 
+        public int CallCount { get; private set; }
+
         public Task<TriggerResult> GetWorkAsync(
             ServiceRef service,
             ScaleConfig config,
-            CancellationToken ct) => _handler(service, config, ct);
+            CancellationToken ct)
+        {
+            CallCount++;
+            return _handler(service, config, ct);
+        }
     }
 
     private sealed class FakePolicy : IScalePolicy

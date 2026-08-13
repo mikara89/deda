@@ -49,3 +49,4 @@ Each ADR follows the lightweight
 | [0016](0016-timestamped-recommendation-stabilization.md) | Timestamped Desired-Replica Recommendation Stabilization | Accepted |
 | [0017](0017-resilient-reconciliation-health.md) | Resilient Reconciliation and Health-Based Readiness | Accepted |
 | [0018](0018-strict-trigger-results-and-secret-resolution.md) | Strict Trigger Results and Per-Service Secret Resolution | Accepted |
+| [0019](0019-real-swarm-ci-verification.md) | Real Docker Swarm Verification in CI | Accepted |

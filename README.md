@@ -363,6 +363,13 @@ dotnet build Deda.sln
 dotnet test Deda.sln
 ```
 
+Unit and adapter tests run on every machine. CI additionally initializes a real
+single-node Docker Swarm and runs `tests/swarm/run-e2e.sh`. That job verifies
+Docker service discovery, label parsing, replicated/global modes, replica
+updates, and end-to-end Prometheus and RabbitMQ scale-up/scale-down. The local
+contract test activates only when `DEDA_SWARM_TESTS=1` and its service-name
+environment variables are supplied by the harness.
+
 ### Build the Docker image
 
 ```bash
@@ -420,10 +427,10 @@ grouped by area. Open an issue if you want to pick one up.
 
 #### Test coverage
 
-- [ ] **`AutoscalerController` unit tests** — mock all ports and assert the
+- [x] **`AutoscalerController` unit tests** — mock all ports and assert the
       reconcile loop correctly pages, skips global services, records state, and
       calls `ApplyDesiredReplicasAsync` only on a real change
-- [ ] **`RetryOnVersionConflictUpdateStrategy` unit tests** — assert
+- [x] **`RetryOnVersionConflictUpdateStrategy` unit tests** — assert
       retry/backoff behaviour on version conflict responses
 - [x] **`RabbitMqTriggerAdapter` unit tests** — mock `IHttpClientFactory` and
       assert metric extraction, auth header, and error paths
