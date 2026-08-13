@@ -1,6 +1,10 @@
 # ADR-0005: In-Process Kestrel HTTP Server as a Hosted Service
 
-**Date:** 2026-02-21 **Status:** Accepted
+**Date:** 2026-02-21 **Status:** Superseded by ADR-0020
+
+> Superseded by [ADR-0020](0020-standard-dotnet-opentelemetry.md), which uses one
+> top-level slim `WebApplication` and the standard OpenTelemetry Prometheus
+> endpoint on the deployment-consistent default port 8080.
 
 ## Context
 

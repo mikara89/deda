@@ -8,17 +8,19 @@ daemon on your Swarm manager, watches all services, and scales replica counts up
 or down based on external metrics — RabbitMQ queue depth, Prometheus queries,
 and more.
 
-> **Status: MVP / early development.** The core autoscaling loop is working. HA
-> leader election and structured observability are on the [roadmap](#roadmap).
+> **Status: release-candidate development.** The autoscaling loop, resilient
+> reconciliation, OpenTelemetry, release hardening, and optional Redis leader
+> election are implemented; see the remaining [roadmap](#roadmap) items.
 
 ---
 
 ## Features
 
-- Scale Swarm services by RabbitMQ queue depth or any Prometheus instant query
+- Scale Swarm services by RabbitMQ queue depth, Prometheus, or an HTTP scalar endpoint
 - Configuration entirely via Docker service labels — no config files to manage
 - Cooldown, recommendation-based scale-down stabilization, and per-step limits prevent flapping
 - Round-robin paging across large service fleets (`DEDA_MAX_SERVICES_PER_CYCLE`)
+- Optional active/standby replicas using a fail-closed Redis TTL leader lease
 - Built-in `/metrics` (Prometheus text), `/health/live`, `/health/ready`
   endpoints
 - Compiled as a NativeAOT Linux binary — tiny footprint, instant startup
@@ -103,10 +105,11 @@ All labels are prefixed with `com.deda.autoscale.`.
 | `activationThreshold`   | double | `5`     | Work at or below this value is inactive and recommends `min`.                 |
 | `cooldownSeconds`       | int    | `60`    | How long to block scale-down after a scale-up event.                          |
 | `scaleDownDelaySeconds` | int    | `120`   | Timestamp-based desired-replica stabilization window for scale-down.          |
+| `scaleToZeroGraceSeconds` | int  | `0`     | Continuous inactive time required before a service with `min=0` can reach zero. |
 | `stepUp`                | int    | `10`    | Maximum replicas added in a single cycle. `0` = unlimited.                    |
 | `stepDown`              | int    | `5`     | Maximum replicas removed in a single cycle. `0` = unlimited.                  |
 | `pollSeconds`           | int    | —        | Deprecated and ignored; use the global `DEDA_POLL_SECONDS` setting.           |
-| `trigger.type`          | string | —       | **Required.** Trigger type: `rabbitmq` or `prometheus`.                       |
+| `trigger.type`          | string | —       | **Required.** Trigger type: `rabbitmq`, `prometheus`, or `http`.               |
 | `trigger.*`             | string | —       | Trigger-specific configuration keys (see below).                              |
 | `failsafe`              | string | `hold`  | Replica target when the trigger fails: `hold`, `min`, or `max`.               |
 
@@ -125,7 +128,13 @@ scale-down, DEDA selects the highest desired-replica recommendation still inside
 `scaleDownDelaySeconds`, then applies `stepDown`. Recommendations expire by
 elapsed time rather than sample count, so long windows do not depend on the
 polling frequency or a fixed history capacity. Setting the window to `0`
-disables recommendation stabilization.
+disables recommendation stabilization. An expiry queue and monotonic maximum
+deque keep state operations amortized O(1); time windows are limited to 86,400
+seconds.
+
+When `min=0`, `scaleToZeroGraceSeconds` requires continuously inactive work
+before zero is recommended. Active work resets the timer. Cooldown and
+scale-down stabilization still apply after the grace period.
 
 `DEDA_POLL_SECONDS` is the authoritative reconcile-loop interval. The legacy
 `com.deda.autoscale.pollSeconds` label is retained as a deprecated compatibility
@@ -178,10 +187,9 @@ container, not service labels:
 | `RABBITMQ_USER_FILE` | Path to a Docker secret file containing the username |
 | `RABBITMQ_PASS_FILE` | Path to a Docker secret file containing the password |
 
-> **Known limitation — single global credential set (current default):** DEDA
-> loads one username and password at startup and uses them for every RabbitMQ
-> trigger call unless a service overrides it. If you need per-service
-> credentials today, use `trigger.credentialsSecret` (see below).
+By default, services share the global credential set. A service can override it
+with `trigger.credentialsSecret` as described below. Credentials are resolved on
+each poll so mounted-secret rotation takes effect without restarting DEDA.
 
 ---
 
@@ -223,17 +231,18 @@ those credentials only for this service's trigger calls. Services without
 `trigger.credentialsSecret` continue to use the global `RABBITMQ_USER` /
 `RABBITMQ_PASS`.
 
-> ⚠️ **Note:** `trigger.credentialsSecret` is a planned feature tracked on the
-> [roadmap](#v100--stable-release-checklist). It is not yet implemented in the
-> current MVP. The secret file approach is the intended design — contributions
-> welcome.
+The secrets directory defaults to `/run/secrets` and can be changed with
+`DEDA_SECRETS_DIRECTORY`. Secret names must be single file names; path traversal
+is rejected.
 
 ---
 
 ### Prometheus
 
-Runs an instant query against a Prometheus HTTP API and uses the first result
-value as the work signal.
+Runs an instant query against a Prometheus HTTP API. The query must return a
+scalar or exactly one vector series. Empty vectors represent zero work; vectors
+with multiple series are rejected as ambiguous instead of selecting one
+silently.
 
 | Label                    | Required | Default | Description                             |
 | ------------------------ | -------- | ------- | --------------------------------------- |
@@ -254,6 +263,33 @@ deploy:
         com.deda.autoscale.trigger.query: "sum(rate(http_requests_total[1m]))"
 ```
 
+### HTTP
+
+Performs a GET against an operator-controlled HTTP(S) endpoint. The response may
+be a plain number, a JSON root scalar, a top-level `value`, or a nested scalar
+selected by a dot-separated `valuePath`. Responses larger than 64 KiB,
+ambiguous objects, and invalid workload values fail safely.
+
+| Label                    | Required | Default | Description                                       |
+| ------------------------ | -------- | ------- | ------------------------------------------------- |
+| `trigger.type`           | ✅       | —       | `http`                                            |
+| `trigger.url`            | ✅       | —       | Absolute HTTP(S) metric URL                       |
+| `trigger.valuePath`      | —        | —       | Dotted JSON property path, e.g. `metrics.pending` |
+| `trigger.timeoutSeconds` | —        | `5`     | Request timeout, capped at 120 seconds            |
+
+```yaml
+deploy:
+    labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.min: "0"
+        com.deda.autoscale.max: "20"
+        com.deda.autoscale.targetPerReplica: "25"
+        com.deda.autoscale.scaleToZeroGraceSeconds: "60"
+        com.deda.autoscale.trigger.type: "http"
+        com.deda.autoscale.trigger.url: "http://worker-metrics:8080/queue"
+        com.deda.autoscale.trigger.valuePath: "metrics.pending"
+```
+
 ---
 
 ## Environment Variables (DEDA Daemon)
@@ -261,11 +297,62 @@ deploy:
 | Variable                      | Default | Description                                                             |
 | ----------------------------- | ------- | ----------------------------------------------------------------------- |
 | `DEDA_POLL_SECONDS`           | `10`    | Global reconcile loop interval in seconds (1–3600).                     |
+| `DEDA_MAX_RECONCILE_BACKOFF_SECONDS` | `60` | Maximum retry delay after controller-level reconciliation failures. |
+| `DEDA_SECRETS_DIRECTORY`      | `/run/secrets` | Directory containing named per-service Docker secrets.          |
 | `DEDA_HTTP_TIMEOUT_SECONDS`   | `5`     | Default outbound HTTP timeout for triggers (1–120).                     |
 | `DEDA_LOG_DECISIONS`          | `true`  | Log every scale decision to stdout.                                     |
 | `DEDA_MAX_SERVICES_PER_CYCLE` | `0`     | Max services processed per poll cycle. `0` = no cap.                    |
 | `DEDA_JITTER_ENABLED`         | `true`  | Stable-hash ordering of services to spread load across cycles.          |
-| `DEDA_HTTP_PORT`              | `8081`  | Port for the `/metrics`, `/health/live`, and `/health/ready` endpoints. |
+| `DEDA_HTTP_PORT`              | `8080`  | Port for the `/metrics`, `/health/live`, and `/health/ready` endpoints. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | —       | Enables OTLP metrics and traces using standard OpenTelemetry settings. |
+| `DEDA_REDIS_CONNECTION`       | —       | Enables Redis leader election; omit for documented single-replica operation. |
+| `DEDA_INSTANCE_ID`            | host/process | Unique owner ID for the Redis lease.                               |
+| `DEDA_LEADER_LOCK_KEY`        | `deda:leader` | Redis key used for leader coordination.                           |
+| `DEDA_LEADER_LEASE_SECONDS`   | `30`    | Leader lease TTL (5–300 seconds).                                    |
+| `DEDA_LEADER_RENEW_SECONDS`   | `10`    | Renewal interval; must be shorter than the lease TTL.                 |
+
+---
+
+## Reconciliation health
+
+Controller-level failures such as a temporarily unavailable Docker manager do
+not terminate DEDA. The worker records the failed attempt, reports
+`/health/ready` as HTTP 503, and retries with exponential backoff bounded by
+`DEDA_MAX_RECONCILE_BACKOFF_SECONDS`. A subsequent successful reconciliation
+automatically restores readiness and resets the retry delay. Cancellation during
+shutdown is propagated and is not recorded as a failure.
+
+Invalid service configuration and unknown trigger types are reported as explicit
+service errors rather than being skipped silently.
+
+---
+
+## Observability
+
+DEDA uses `ILogger<T>`, `System.Diagnostics.Metrics`, and `ActivitySource` with
+the source name `Deda.Autoscaler`. `/metrics` is served by the OpenTelemetry
+Prometheus exporter. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to additionally export
+metrics and traces to an OTLP-compatible backend; standard variables such as
+`OTEL_EXPORTER_OTLP_PROTOCOL`, headers, and timeout are honored by the exporter.
+
+Core metrics include reconcile count/failures/duration, trigger
+requests/failures/duration/value, scale decisions/events, and current/desired
+replicas. Trigger value and replica snapshots are observable gauges; durations
+are histograms and totals are counters. Dimensions are limited to service,
+trigger, direction, and result.
+Trace spans cover reconciliation, Docker discovery, service evaluation, trigger
+calls, scale decisions, and replica updates.
+
+### High availability
+
+Set `DEDA_REDIS_CONNECTION` on two or more DEDA replicas to enable active/standby
+operation. The leader renews an owner-specific Redis TTL lease; standbys skip
+reconciliation and take over after release or TTL expiry. Lease failures are
+fail-closed and make readiness unhealthy, while a confirmed standby remains
+ready. Ownership is confirmed again immediately before each Docker replica
+update. Without Redis, DEDA warns at startup and must run with
+`deploy.replicas: 1`. See [Deda.HA](src/Deda.HA/README.md) for operational
+details and the Docker fencing limitation.
 
 ---
 
@@ -288,7 +375,7 @@ deploy:
 │  │    │     ├─► IScaleConfigProvider  ──► Docker labels     │  │
 │  │    │     │     (com.deda.autoscale.*)                    │  │
 │  │    │     │                                               │  │
-│  │    │     ├─► ITriggerAdapter       ──► RabbitMQ / Prom   │  │
+│  │    │     ├─► ITriggerAdapter       ──► Rabbit / Prom / HTTP │
 │  │    │     │     GetWorkAsync()                            │  │
 │  │    │     │                                               │  │
 │  │    │     └─► IScalePolicy          (pure logic)         │  │
@@ -297,7 +384,7 @@ deploy:
 │  │    └─► IServiceUpdateStrategy                           │  │
 │  │          RetryOnVersionConflictUpdateStrategy            │  │
 │  │                                                          │  │
-│  │  HTTP server (:8081)                                     │  │
+│  │  HTTP server (:8080)                                     │  │
 │  │    GET /metrics      Prometheus text format              │  │
 │  │    GET /health/live  Always 200                          │  │
 │  │    GET /health/ready When reconcile loop is healthy      │  │
@@ -316,11 +403,12 @@ deploy:
 | `Deda.Triggers.Abstractions` | Trigger registry                                             |
 | `Deda.Triggers.RabbitMq`     | RabbitMQ Management API trigger                              |
 | `Deda.Triggers.Prometheus`   | Prometheus instant query trigger                             |
+| `Deda.Triggers.Http`         | Generic HTTP/JSON scalar metric trigger                      |
 | `Deda.Policies`              | `SimpleScalePolicyMvp` — cooldown, delay window, step limits |
 | `Deda.Updates`               | Optimistic concurrency update with backoff+jitter            |
 | `Deda.Host`                  | DI wiring, hosted service, HTTP server, entry point          |
-| `Deda.HA`                    | 🚧 Roadmap: leader election for multi-manager HA             |
-| `Deda.Observability`         | 🚧 Roadmap: structured metrics and tracing                   |
+| `Deda.HA`                    | Optional Redis TTL leader lease for active/standby replicas  |
+| `Deda.Observability`         | OpenTelemetry metrics, traces, and structured logging        |
 | `examples/`                  | Ready-to-deploy, commented Swarm stack files                 |
 | `deploy/swarm/`              | All-in-one development sandbox stack                         |
 
@@ -347,6 +435,13 @@ dotnet build Deda.sln
 dotnet test Deda.sln
 ```
 
+Unit and adapter tests run on every machine. CI additionally initializes a real
+single-node Docker Swarm and runs `tests/swarm/run-e2e.sh`. That job verifies
+Docker service discovery, label parsing, replicated/global modes, replica
+updates, and end-to-end Prometheus and RabbitMQ scale-up/scale-down. The local
+contract test activates only when `DEDA_SWARM_TESTS=1` and its service-name
+environment variables are supplied by the harness.
+
 ### Build the Docker image
 
 ```bash
@@ -367,59 +462,58 @@ grouped by area. Open an issue if you want to pick one up.
 
 #### Core correctness
 
-- [ ] **Per-service trigger credentials (`trigger.credentialsSecret`)** —
+- [x] **Per-service trigger credentials (`trigger.credentialsSecret`)** —
       implement label-driven secret resolution in `RabbitMqTriggerAdapter` so
       each service can reference a named Docker secret (`username:password`)
       instead of sharing the global credential set. See the
       [Per-service RabbitMQ credentials](#per-service-rabbitmq-credentials)
       section for the intended behaviour.
-- [ ] **Fix Prometheus metrics model** — replace the string-interpolated key map
-      in `MetricsRegistry` with a proper `MetricFamily` abstraction that
-      separates metric name from label values, and emits correct `# HELP` /
-      `# TYPE` headers
-- [ ] **Switch telemetry to structured logging** — replace `ConsoleTelemetryMvp`
+- [x] **Fix Prometheus metrics model** — replace the string-interpolated custom
+      registry with standard OpenTelemetry instruments and the Prometheus
+      exporter
+- [x] **Switch telemetry to structured logging** — replace `ConsoleTelemetryMvp`
       / `Console.WriteLine` with `ILogger<T>` so log level, structured fields,
       and sink configuration all work through the standard .NET logging pipeline
-- [ ] **Warn when HA is disabled** — log a startup warning when `ILeaderElector`
+- [x] **Warn when HA is disabled** — log a startup warning when `ILeaderElector`
       is not registered, so operators know they are running without HA
 
 #### High availability (`Deda.HA`)
 
-- [ ] **Implement `ILeaderElector`** — at minimum one working strategy
+- [x] **Implement `ILeaderElector`** — at minimum one working strategy
       (shared-store TTL lock via Redis, or Swarm-native `replicas: 1` +
       documented single-instance guidance). See
       [src/Deda.HA/README.md](src/Deda.HA/README.md) for design options
-- [ ] **Integration test** — verify that a standby instance does not apply scale
+- [x] **Integration test** — verify that a standby instance does not apply scale
       changes while a leader is active
 
 #### Observability (`Deda.Observability`)
 
-- [ ] **Implement `IAutoscalerTelemetry` with OpenTelemetry** — emit scale event
+- [x] **Implement `IAutoscalerTelemetry` with OpenTelemetry** — emit scale event
       counters, current replica gauge, and trigger value gauge via the OTel
       metrics SDK
-- [ ] **Expose OTLP export** — configurable via `OTEL_EXPORTER_OTLP_ENDPOINT`
+- [x] **Expose OTLP export** — configurable via `OTEL_EXPORTER_OTLP_ENDPOINT`
       following OTel conventions
-- [ ] **Distributed traces** — spans for the reconcile loop and each trigger
+- [x] **Distributed traces** — spans for the reconcile loop and each trigger
       call, so latency outliers are visible in any OTLP-compatible backend
 
 #### Test coverage
 
-- [ ] **`AutoscalerController` unit tests** — mock all ports and assert the
+- [x] **`AutoscalerController` unit tests** — mock all ports and assert the
       reconcile loop correctly pages, skips global services, records state, and
       calls `ApplyDesiredReplicasAsync` only on a real change
-- [ ] **`RetryOnVersionConflictUpdateStrategy` unit tests** — assert
+- [x] **`RetryOnVersionConflictUpdateStrategy` unit tests** — assert
       retry/backoff behaviour on version conflict responses
-- [ ] **`RabbitMqTriggerAdapter` unit tests** — mock `IHttpClientFactory` and
+- [x] **`RabbitMqTriggerAdapter` unit tests** — mock `IHttpClientFactory` and
       assert metric extraction, auth header, and error paths
-- [ ] **`PrometheusTriggerAdapter` unit tests** — mock HTTP and assert PromQL
+- [x] **`PrometheusTriggerAdapter` unit tests** — mock HTTP and assert PromQL
       response parsing and empty-result handling
-- [ ] **Minimum 80 % line coverage** enforced in CI
+- [x] **Minimum 80 % line coverage** enforced in CI
 
 #### Deployment & packaging
 
-- [ ] **Pre-built Docker image on GHCR** — publish `ghcr.io/mikara89/deda:<tag>`
+- [x] **Pre-built Docker image on GHCR** — publish `ghcr.io/mikara89/deda:<tag>`
       via GitHub Actions on every version tag
-- [ ] **Multi-arch image** — `linux/amd64` and `linux/arm64` (NativeAOT
+- [x] **Multi-arch image** — `linux/amd64` and `linux/arm64` (NativeAOT
       cross-compilation)
 - [ ] **Reference Swarm stack** — a production-ready
       `deploy/swarm/deda-stack.yml` with secrets, placement constraints,
@@ -429,9 +523,9 @@ grouped by area. Open an issue if you want to pick one up.
 
 - [ ] **Per-service poll interval** — replace the deprecated, currently ignored
       `com.deda.autoscale.pollSeconds` label with real per-service scheduling
-- [ ] **Changelog** — maintain `CHANGELOG.md` with semantic versioning from
+- [x] **Changelog** — maintain `CHANGELOG.md` with semantic versioning from
       first public release onwards
-- [ ] **Security policy** — add `SECURITY.md` with a vulnerability disclosure
+- [x] **Security policy** — add `SECURITY.md` with a vulnerability disclosure
       contact
 
 ---
@@ -440,8 +534,8 @@ grouped by area. Open an issue if you want to pick one up.
 
 | Area                         | Notes                                                           |
 | ---------------------------- | --------------------------------------------------------------- |
-| Additional triggers          | HTTP endpoint polling, Redis list length, custom webhooks       |
-| Scale-to-zero grace period   | Configurable delay before allowing replica count to reach 0     |
+| Additional triggers          | Redis list length, Kafka, cloud queues, custom webhooks          |
+| Advanced scaling             | Scale-up stabilization, separate policies, predictive options   |
 | Label-based trigger chaining | Scale on the max/avg of multiple trigger values for one service |
 | Web UI / dashboard           | Read-only view of current service states and recent decisions   |
 

@@ -29,6 +29,7 @@ COPY ["src/Deda.Observability/Deda.Observability.csproj", "src/Deda.Observabilit
 COPY ["src/Deda.Swarm/Deda.Swarm.csproj", "src/Deda.Swarm/"]
 COPY ["src/Deda.Config.Labels/Deda.Config.Labels.csproj", "src/Deda.Config.Labels/"]
 COPY ["src/Deda.Triggers.Prometheus/Deda.Triggers.Prometheus.csproj", "src/Deda.Triggers.Prometheus/"]
+COPY ["src/Deda.Triggers.Http/Deda.Triggers.Http.csproj", "src/Deda.Triggers.Http/"]
 COPY ["src/Deda.Triggers.RabbitMq/Deda.Triggers.RabbitMq.csproj", "src/Deda.Triggers.RabbitMq/"]
 COPY ["src/Deda.Policies/Deda.Policies.csproj", "src/Deda.Policies/"]
 

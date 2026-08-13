@@ -1,32 +1,22 @@
-# Deda.HA — High Availability (Not Yet Implemented)
+# Deda.HA
 
-This project is a **planned stub**. It will contain an implementation of
-`ILeaderElector` from `Deda.Core`, enabling multiple DEDA instances to run
-across Swarm manager nodes without conflicting on scale updates.
+`Deda.HA` provides a fail-closed Redis TTL lease for active/standby DEDA
+replicas. The leader renews the lease in the background. A standby performs no
+Docker discovery or replica updates, and the controller checks leadership again
+immediately before every mutating Docker call.
 
-## Planned behaviour
+Enable it with `DEDA_REDIS_CONNECTION`, for example `redis:6379,ssl=false`.
+Each task should have a unique `DEDA_INSTANCE_ID`; Docker task hostnames are
+unique and are used with the process ID when the variable is omitted.
 
-- One DEDA instance acts as the **active leader** and runs the reconciliation
-  loop.
-- Other instances remain on standby and take over automatically if the leader
-  goes away.
-- Leader election will use a distributed locking mechanism suitable for Docker
-  Swarm. Two approaches are being considered:
-  - **Shared store lock** — use an external key-value store (e.g., Redis or
-    etcd) to hold a TTL-based leader key. Each DEDA instance tries to atomically
-    acquire the key; the one that holds it is the active leader and must renew
-    it on a heartbeat interval. If the leader process dies the TTL expires and
-    another instance can take over. This approach requires an extra dependency
-    but is battle-tested and straightforward to reason about.
-  - **Swarm-native lock** — use the Docker Swarm API itself as the coordination
-    primitive (e.g., write a well-known service label or config object that acts
-    as a lock, or restrict DEDA to `replicas: 1` with Swarm's own restart policy
-    guaranteeing at-most-one active instance at any time). This requires no
-    external dependency but gives less control over failover timing and
-    split-brain scenarios.
+The defaults are a 30-second TTL and 10-second renewal interval. Override them
+with `DEDA_LEADER_LEASE_SECONDS`, `DEDA_LEADER_RENEW_SECONDS`, and
+`DEDA_LEADER_LOCK_KEY`. A Redis outage fails closed and makes all instances
+unready; a replica that successfully confirms another owner is a healthy
+standby. On graceful shutdown the leader releases its lock; after an ungraceful
+failure, another instance can take over after TTL expiry.
 
-## Contributing
-
-If you are interested in implementing this, open an issue to discuss the
-approach before starting. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for
-general guidelines. The `ILeaderElector` interface is defined in `Deda.Core`.
+Redis should itself be deployed with the durability and network isolation
+appropriate to the cluster. The lease prevents normal concurrent updates but
+Docker Swarm has no fencing-token field, so it cannot provide a mathematically
+linearizable fence across an arbitrary network partition.

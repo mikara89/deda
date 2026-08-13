@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     name: Build & Test
@@ -13,10 +16,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: "10.0.x"
 
@@ -29,10 +32,88 @@ jobs:
       - name: Test
         run: dotnet test Deda.sln --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory ./coverage
 
+      - name: Enforce 80% line coverage
+        shell: pwsh
+        run: |
+          $reports = Get-ChildItem ./coverage -Recurse -Filter coverage.cobertura.xml
+          if ($reports.Count -eq 0) { throw "No Cobertura reports were produced." }
+          $requiredPackages = @(
+            "Deda.Config.Labels",
+            "Deda.Controller",
+            "Deda.HA",
+            "Deda.Observability",
+            "Deda.Policies",
+            "Deda.Triggers.Prometheus",
+            "Deda.Triggers.Http",
+            "Deda.Triggers.RabbitMq",
+            "Deda.Updates"
+          )
+          $bestByPackage = @{}
+          foreach ($report in $reports) {
+            [xml]$document = Get-Content $report.FullName
+            foreach ($package in $document.coverage.packages.package) {
+              $name = [string]$package.name
+              if ($name -notin $requiredPackages) { continue }
+              $valid = 0L
+              $covered = 0L
+              foreach ($class in $package.classes.class) {
+                foreach ($line in $class.lines.line) {
+                  $valid++
+                  if ([int]$line.hits -gt 0) { $covered++ }
+                }
+              }
+              if (-not $bestByPackage.ContainsKey($name) -or $covered -gt $bestByPackage[$name].Covered) {
+                $bestByPackage[$name] = @{ Covered = $covered; Valid = $valid }
+              }
+            }
+          }
+          $missing = @($requiredPackages | Where-Object { -not $bestByPackage.ContainsKey($_) })
+          if ($missing.Count -gt 0) { throw "Coverage is missing required packages: $($missing -join ', ')" }
+          $linesValid = [long](($requiredPackages | ForEach-Object { $bestByPackage[$_].Valid } | Measure-Object -Sum).Sum)
+          $linesCovered = [long](($requiredPackages | ForEach-Object { $bestByPackage[$_].Covered } | Measure-Object -Sum).Sum)
+          if ($linesValid -eq 0) { throw "Coverage reports contain no executable lines." }
+          $percent = 100.0 * $linesCovered / $linesValid
+          Write-Host ("Production package line coverage: {0:N2}% ({1}/{2})" -f $percent, $linesCovered, $linesValid)
+          if ($percent -lt 80.0) { throw ("Line coverage {0:N2}% is below the required 80%." -f $percent) }
+
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: coverage
           path: ./coverage/**/coverage.cobertura.xml
           if-no-files-found: ignore
+
+  swarm-integration:
+    name: Real Docker Swarm integration
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore Deda.sln
+
+      - name: Build
+        run: dotnet build Deda.sln --no-restore --configuration Release
+
+      - name: Run real Swarm scenarios
+        run: bash tests/swarm/run-e2e.sh
+
+  image:
+    name: Build NativeAOT container image
+    runs-on: ubuntu-latest
+    needs: swarm-integration
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build image
+        run: docker build -f src/Deda.Host/Dockerfile -t deda:ci .

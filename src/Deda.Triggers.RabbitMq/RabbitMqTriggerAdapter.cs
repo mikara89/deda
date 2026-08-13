@@ -54,13 +54,13 @@ namespace Deda.Triggers.RabbitMq
                 client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
                 using var req = new HttpRequestMessage(HttpMethod.Get, uri);
-                ApplyBasicAuth(req);
+                ApplyBasicAuth(req, service, config);
 
                 using var resp = await client.SendAsync(req, ct).ConfigureAwait(false);
 
                 if (!resp.IsSuccessStatusCode)
                 {
-                    var body = await SafeReadBody(resp).ConfigureAwait(false);
+                    var body = await SafeReadBody(resp, ct).ConfigureAwait(false);
                     return TriggerResult.Fail($"rabbitmq http {(int)resp.StatusCode}: {Truncate(body, 200)}");
                 }
 
@@ -76,15 +76,19 @@ namespace Deda.Triggers.RabbitMq
                 var work = metricEl.GetDouble();
                 return TriggerResult.Ok(work);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 return TriggerResult.Fail($"{ex.GetType().Name}: {ex.Message}");
             }
         }
 
-        private void ApplyBasicAuth(HttpRequestMessage req)
+        private void ApplyBasicAuth(HttpRequestMessage req, ServiceRef service, ScaleConfig config)
         {
-            var c = _creds.Get();
+            var c = _creds.Get(service, config);
             var token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{c.Username}:{c.Password}"));
             req.Headers.Authorization = new AuthenticationHeaderValue("Basic", token);
         }
@@ -99,9 +103,10 @@ namespace Deda.Triggers.RabbitMq
             return new Uri(baseUri, rel);
         }
 
-        private static async Task<string> SafeReadBody(HttpResponseMessage resp)
+        private static async Task<string> SafeReadBody(HttpResponseMessage resp, CancellationToken ct)
         {
-            try { return await resp.Content.ReadAsStringAsync().ConfigureAwait(false); }
+            try { return await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { return string.Empty; }
         }
 

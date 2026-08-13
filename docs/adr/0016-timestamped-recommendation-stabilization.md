@@ -1,6 +1,6 @@
 # ADR-0016: Timestamped Desired-Replica Recommendation Stabilization
 
-**Date:** 2026-08-13 **Status:** Accepted
+**Date:** 2026-08-13 **Status:** Accepted; amended by ADR-0023
 
 ## Context
 

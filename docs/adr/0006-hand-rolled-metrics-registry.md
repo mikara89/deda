@@ -1,6 +1,9 @@
 # ADR-0006: Hand-Rolled In-Process Prometheus Metrics Registry
 
-**Date:** 2026-02-21 **Status:** Accepted
+**Date:** 2026-02-21 **Status:** Superseded by ADR-0020
+
+> Superseded by [ADR-0020](0020-standard-dotnet-opentelemetry.md), which uses
+> standard .NET metrics, tracing, logging, and exporters.
 
 ## Context
 

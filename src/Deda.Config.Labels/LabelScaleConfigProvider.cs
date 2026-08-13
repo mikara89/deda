@@ -32,6 +32,7 @@ namespace Deda.Config.Labels
 
                 CooldownSeconds = GetInt(L, Key("cooldownSeconds"), 60),
                 ScaleDownDelaySeconds = GetInt(L, Key("scaleDownDelaySeconds"), 120),
+                ScaleToZeroGraceSeconds = GetInt(L, Key("scaleToZeroGraceSeconds"), 0),
 
                 StepUp = GetInt(L, Key("stepUp"), 10),
                 StepDown = GetInt(L, Key("stepDown"), 5),
@@ -77,6 +78,9 @@ namespace Deda.Config.Labels
 
             if (cfg.CooldownSeconds < 0) { error = "cooldownSeconds < 0"; return false; }
             if (cfg.ScaleDownDelaySeconds < 0) { error = "scaleDownDelaySeconds < 0"; return false; }
+            if (cfg.ScaleDownDelaySeconds > 86_400) { error = "scaleDownDelaySeconds > 86400"; return false; }
+            if (cfg.ScaleToZeroGraceSeconds < 0) { error = "scaleToZeroGraceSeconds < 0"; return false; }
+            if (cfg.ScaleToZeroGraceSeconds > 86_400) { error = "scaleToZeroGraceSeconds > 86400"; return false; }
             if (cfg.StepUp < 0) { error = "stepUp < 0"; return false; }
             if (cfg.StepDown < 0) { error = "stepDown < 0"; return false; }
 

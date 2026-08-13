@@ -4,7 +4,7 @@ services:
   # deda:
   #   image: dedahost:latest   # build/push your host image
   #   environment:
-  #     DEDA_HTTP_PORT: "8081"
+  #     DEDA_HTTP_PORT: "8080"
   #     DEDA_POLL_SECONDS: "10"
   #     DEDA_HTTP_TIMEOUT_SECONDS: "5"
   #     DEDA_MAX_SERVICES_PER_CYCLE: "25"
@@ -15,7 +15,7 @@ services:
   #     RABBITMQ_PASS_FILE: "/run/secrets/rabbitmq_pass"
   #   user: "0:0"  # Run as root to access Docker socket (MVP)
   #   ports:
-  #     - "8081:8081"
+  #     - "8080:8080"
 
   #   secrets:
   #     - rabbitmq_user

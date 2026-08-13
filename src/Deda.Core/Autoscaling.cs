@@ -31,6 +31,7 @@
         public int PollSeconds { get; init; } = 5;
         public int CooldownSeconds { get; init; } = 30;
         public int ScaleDownDelaySeconds { get; init; } = 30;
+        public int ScaleToZeroGraceSeconds { get; init; }
 
         public int StepUp { get; init; } = 10;
         public int StepDown { get; init; } = 5;
@@ -75,21 +76,50 @@
 
     public sealed class ServiceScaleState
     {
-        private readonly List<ScaleRecommendation> _recommendationHistory = [];
+        private readonly Queue<ScaleRecommendation> _recommendationHistory = [];
+        private readonly LinkedList<ScaleRecommendation> _maximumCandidates = [];
+        private DateTimeOffset? _lastRecommendationUtc;
 
         public int LastAppliedReplicas { get; set; }
         public DateTimeOffset? LastScaleUpUtc { get; set; }
         public DateTimeOffset? LastScaleDownUtc { get; set; }
+        public DateTimeOffset? InactiveSinceUtc { get; set; }
 
-        public IReadOnlyList<ScaleRecommendation> RecommendationHistory => _recommendationHistory;
+        public IReadOnlyList<ScaleRecommendation> RecommendationHistory => _recommendationHistory.ToArray();
+        public int RecommendationCount => _recommendationHistory.Count;
+        public int HighestRecommendation => _maximumCandidates.First?.Value.DesiredReplicas
+            ?? throw new InvalidOperationException("Recommendation history is empty.");
 
-        public void AddRecommendation(ScaleRecommendation recommendation) =>
-            _recommendationHistory.Add(recommendation);
+        public void AddRecommendation(ScaleRecommendation recommendation)
+        {
+            if (_lastRecommendationUtc is not null && recommendation.TimestampUtc < _lastRecommendationUtc)
+                ClearRecommendations();
 
-        public void RemoveRecommendationsOlderThan(DateTimeOffset cutoffUtc) =>
-            _recommendationHistory.RemoveAll(recommendation => recommendation.TimestampUtc < cutoffUtc);
+            _recommendationHistory.Enqueue(recommendation);
+            while (_maximumCandidates.Last is not null &&
+                   _maximumCandidates.Last.Value.DesiredReplicas <= recommendation.DesiredReplicas)
+                _maximumCandidates.RemoveLast();
+            _maximumCandidates.AddLast(recommendation);
+            _lastRecommendationUtc = recommendation.TimestampUtc;
+        }
 
-        public void ClearRecommendations() => _recommendationHistory.Clear();
+        public void RemoveRecommendationsOlderThan(DateTimeOffset cutoffUtc)
+        {
+            while (_recommendationHistory.TryPeek(out var recommendation) &&
+                   recommendation.TimestampUtc < cutoffUtc)
+                _recommendationHistory.Dequeue();
+
+            while (_maximumCandidates.First is not null &&
+                   _maximumCandidates.First.Value.TimestampUtc < cutoffUtc)
+                _maximumCandidates.RemoveFirst();
+        }
+
+        public void ClearRecommendations()
+        {
+            _recommendationHistory.Clear();
+            _maximumCandidates.Clear();
+            _lastRecommendationUtc = null;
+        }
     }
 
     // =========================
@@ -138,11 +168,39 @@
     {
         void RecordDecision(ScaleDecision decision);
         void RecordError(string serviceName, string stage, Exception ex);
+        IDisposable? StartOperation(string operation, string? serviceName = null, string? triggerType = null) => null;
+        void RecordReconcile(TimeSpan duration, bool success) { }
+        void RecordTrigger(string serviceName, string triggerType, TimeSpan duration, TriggerResult result) { }
+    }
+
+    public sealed record ReconciliationHealthSnapshot(
+        DateTimeOffset? LastAttemptUtc,
+        DateTimeOffset? LastSuccessfulUtc,
+        DateTimeOffset? LastFailureUtc,
+        string? LastError)
+    {
+        public bool IsReady { get; init; }
+    }
+
+    public interface IReconciliationHealth
+    {
+        ReconciliationHealthSnapshot Snapshot();
+        void RecordAttempt(DateTimeOffset timestampUtc);
+        void RecordSuccess(DateTimeOffset timestampUtc);
+        void RecordFailure(DateTimeOffset timestampUtc, Exception exception);
     }
 
     public interface ILeaderElector
     {
         Task<bool> IsLeaderAsync(CancellationToken ct);
+    }
+
+    public sealed class LeaderElectionUnavailableException : Exception
+    {
+        public LeaderElectionUnavailableException(string message, Exception innerException)
+            : base(message, innerException)
+        {
+        }
     }
 
     public interface IServiceUpdateStrategy

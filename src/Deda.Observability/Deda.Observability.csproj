@@ -1,7 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.5" />
+    <PackageReference Include="OpenTelemetry" Version="1.17.0" />
     <ProjectReference Include="..\Deda.Core\Deda.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deda.Observability.Tests" />
   </ItemGroup>
 
   <PropertyGroup>

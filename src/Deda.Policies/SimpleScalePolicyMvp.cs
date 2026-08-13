@@ -10,6 +10,10 @@ namespace Deda.Policies
 
             if (!trigger.Success || !TriggerResult.IsValidWork(trigger.Work))
             {
+                // A failed or invalid observation says nothing about workload inactivity.
+                // Restart the continuous-inactivity window after the next valid zero.
+                state.InactiveSinceUtc = null;
+
                 int desiredFail = cfg.FailSafe switch
                 {
                     FailSafeMode.Min => cfg.MinReplicas,
@@ -32,6 +36,22 @@ namespace Deda.Policies
 
             int bounded = Clamp(raw, cfg.MinReplicas, cfg.MaxReplicas);
 
+            bool blockedByScaleToZeroGrace = false;
+            if (bounded == 0 && trigger.Work <= cfg.ActivationThreshold)
+            {
+                state.InactiveSinceUtc ??= nowUtc;
+                if (current > 0 &&
+                    nowUtc - state.InactiveSinceUtc.Value < TimeSpan.FromSeconds(cfg.ScaleToZeroGraceSeconds))
+                {
+                    bounded = current;
+                    blockedByScaleToZeroGrace = true;
+                }
+            }
+            else
+            {
+                state.InactiveSinceUtc = null;
+            }
+
             RecordRecommendation(state, bounded, nowUtc, cfg.ScaleDownDelaySeconds);
 
             // Cooldown: block scale-down shortly after scale-up
@@ -51,8 +71,7 @@ namespace Deda.Policies
             bool blockedByStabilization = false;
             if (!blockedByCooldown && stabilized < current)
             {
-                int highestRecentRecommendation = state.RecommendationHistory
-                    .Max(recommendation => recommendation.DesiredReplicas);
+                int highestRecentRecommendation = state.HighestRecommendation;
 
                 // Recommendation history must never cause an otherwise-downscale decision
                 // to scale up. External changes may make an old recommendation exceed current.
@@ -71,7 +90,8 @@ namespace Deda.Policies
             string reason =
                 $"work={trigger.Work:0.##} raw={raw} bounded={bounded} stabilized={stabilized} final={final} " +
                 $"cooldownBlocked={blockedByCooldown} stabilizationBlocked={blockedByStabilization} " +
-                $"recommendations={state.RecommendationHistory.Count} windowSeconds={cfg.ScaleDownDelaySeconds} trig={cfg.TriggerType}";
+                $"scaleToZeroGraceBlocked={blockedByScaleToZeroGrace} " +
+                $"recommendations={state.RecommendationCount} windowSeconds={cfg.ScaleDownDelaySeconds} trig={cfg.TriggerType}";
 
 
             return new ScaleDecision(service.ServiceId, service.Name, current, final, trigger.Work, reason, nowUtc);
