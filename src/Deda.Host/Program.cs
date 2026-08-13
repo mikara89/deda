@@ -30,10 +30,16 @@ builder.Services.AddSingleton(opts);
 
 // Metrics + readiness + API server
 builder.Services.AddSingleton<IMetricsRegistry, MetricsRegistry>();
-builder.Services.AddSingleton<ReadinessProbe>();
+builder.Services.AddSingleton<ReconciliationHealthState>();
+builder.Services.AddSingleton<IReconciliationHealth>(sp => sp.GetRequiredService<ReconciliationHealthState>());
 builder.Services.AddHostedService<ApiServerHostedService>();
 
 builder.Services.AddSingleton(new Deda.Controller.HostOptions(opts.PollSeconds, opts.MaxServicesPerCycle, opts.JitterEnabled));
+builder.Services.AddSingleton(new ReconcileLoopOptions(
+    TimeSpan.FromSeconds(opts.PollSeconds),
+    TimeSpan.FromSeconds(opts.MaxReconcileBackoffSeconds)));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<ResilientReconcileRunner>();
 
 builder.Services.AddHttpClient("rabbitmq", c =>
 {

@@ -27,7 +27,7 @@ namespace Deda.Controller
             IStateStore<string, ServiceScaleState> stateStore,
             IAutoscalerTelemetry telemetry,
             IServiceUpdateStrategy updates,
-            HostOptions HostOptions,
+            HostOptions hostOptions,
             ILeaderElector? leader = null)
         {
             _swarm = swarm;
@@ -38,7 +38,7 @@ namespace Deda.Controller
             _telemetry = telemetry;
             _updates = updates;
             _leader = leader;
-            _hostOptions = HostOptions;
+            _hostOptions = hostOptions;
         }
 
         public async Task ReconcileOnceAsync(CancellationToken ct)
@@ -88,7 +88,13 @@ namespace Deda.Controller
                     }
 
                     if (!_triggers.TryResolve(cfg.TriggerType, out var adapter))
+                    {
+                        _telemetry.RecordError(
+                            svc.Name,
+                            "trigger",
+                            new InvalidOperationException($"Unknown trigger type '{cfg.TriggerType}'."));
                         continue;
+                    }
 
                     var state = _stateStore.GetOrAdd(svc.ServiceId);
 
@@ -109,6 +115,10 @@ namespace Deda.Controller
 
                         state.LastAppliedReplicas = decision.DesiredReplicas;
                     }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {

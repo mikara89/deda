@@ -1,18 +1,19 @@
-﻿using System.Net;
+using Deda.Core;
+using System.Net;
 
 namespace Deda.Host
 {
     public sealed class ApiServerHostedService : IHostedService
     {
         private readonly IMetricsRegistry _metrics;
-        private readonly ReadinessProbe _readiness;
+        private readonly IReconciliationHealth _health;
 
         private WebApplication? _app;
 
-        public ApiServerHostedService(IMetricsRegistry metrics, ReadinessProbe readiness)
+        public ApiServerHostedService(IMetricsRegistry metrics, IReconciliationHealth health)
         {
             _metrics = metrics;
-            _readiness = readiness;
+            _health = health;
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
@@ -35,10 +36,18 @@ namespace Deda.Host
 
             app.MapGet("/health/ready", () =>
             {
-                var (ok, detail) = _readiness.Snapshot();
-                return ok
-                    ? Results.Ok(new { status = "ready" })
-                    : Results.Problem(detail: detail, statusCode: 503);
+                var health = _health.Snapshot();
+                return health.IsReady
+                    ? Results.Ok(new
+                    {
+                        status = "ready",
+                        lastAttemptUtc = health.LastAttemptUtc,
+                        lastSuccessfulUtc = health.LastSuccessfulUtc,
+                    })
+                    : Results.Problem(
+                        title: "Reconciliation is not healthy",
+                        detail: health.LastError ?? "No successful reconciliation has completed.",
+                        statusCode: 503);
             });
 
             _app = app;

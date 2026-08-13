@@ -140,6 +140,23 @@
         void RecordError(string serviceName, string stage, Exception ex);
     }
 
+    public sealed record ReconciliationHealthSnapshot(
+        DateTimeOffset? LastAttemptUtc,
+        DateTimeOffset? LastSuccessfulUtc,
+        DateTimeOffset? LastFailureUtc,
+        string? LastError)
+    {
+        public bool IsReady { get; init; }
+    }
+
+    public interface IReconciliationHealth
+    {
+        ReconciliationHealthSnapshot Snapshot();
+        void RecordAttempt(DateTimeOffset timestampUtc);
+        void RecordSuccess(DateTimeOffset timestampUtc);
+        void RecordFailure(DateTimeOffset timestampUtc, Exception exception);
+    }
+
     public interface ILeaderElector
     {
         Task<bool> IsLeaderAsync(CancellationToken ct);

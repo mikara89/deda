@@ -13,6 +13,7 @@
 
         public int MaxServicesPerCycle { get; init; } = 0; // 0 = no cap
         public bool JitterEnabled { get; init; } = true;
+        public int MaxReconcileBackoffSeconds { get; init; } = 60;
 
         public static DedaHostOptions FromEnvironment()
         {
@@ -23,6 +24,7 @@
                 LogDecisions = ReadBool("DEDA_LOG_DECISIONS", true),
                 MaxServicesPerCycle = ReadInt("DEDA_MAX_SERVICES_PER_CYCLE", 0, 0, 10_000),
                 JitterEnabled = ReadBool("DEDA_JITTER_ENABLED", true),
+                MaxReconcileBackoffSeconds = ReadInt("DEDA_MAX_RECONCILE_BACKOFF_SECONDS", 60, 1, 3600),
             };
         }
 

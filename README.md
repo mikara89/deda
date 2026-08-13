@@ -261,11 +261,26 @@ deploy:
 | Variable                      | Default | Description                                                             |
 | ----------------------------- | ------- | ----------------------------------------------------------------------- |
 | `DEDA_POLL_SECONDS`           | `10`    | Global reconcile loop interval in seconds (1–3600).                     |
+| `DEDA_MAX_RECONCILE_BACKOFF_SECONDS` | `60` | Maximum retry delay after controller-level reconciliation failures. |
 | `DEDA_HTTP_TIMEOUT_SECONDS`   | `5`     | Default outbound HTTP timeout for triggers (1–120).                     |
 | `DEDA_LOG_DECISIONS`          | `true`  | Log every scale decision to stdout.                                     |
 | `DEDA_MAX_SERVICES_PER_CYCLE` | `0`     | Max services processed per poll cycle. `0` = no cap.                    |
 | `DEDA_JITTER_ENABLED`         | `true`  | Stable-hash ordering of services to spread load across cycles.          |
 | `DEDA_HTTP_PORT`              | `8081`  | Port for the `/metrics`, `/health/live`, and `/health/ready` endpoints. |
+
+---
+
+## Reconciliation health
+
+Controller-level failures such as a temporarily unavailable Docker manager do
+not terminate DEDA. The worker records the failed attempt, reports
+`/health/ready` as HTTP 503, and retries with exponential backoff bounded by
+`DEDA_MAX_RECONCILE_BACKOFF_SECONDS`. A subsequent successful reconciliation
+automatically restores readiness and resets the retry delay. Cancellation during
+shutdown is propagated and is not recorded as a failure.
+
+Invalid service configuration and unknown trigger types are reported as explicit
+service errors rather than being skipped silently.
 
 ---
 

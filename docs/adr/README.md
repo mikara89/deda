@@ -47,3 +47,4 @@ Each ADR follows the lightweight
 | [0014](0014-singleton-http-client-docker.md)    | Singleton `HttpClient` for Docker Engine API                      | Accepted |
 | [0015](0015-named-http-clients-for-triggers.md) | Named `IHttpClientFactory` Clients per Trigger Type               | Accepted |
 | [0016](0016-timestamped-recommendation-stabilization.md) | Timestamped Desired-Replica Recommendation Stabilization | Accepted |
+| [0017](0017-resilient-reconciliation-health.md) | Resilient Reconciliation and Health-Based Readiness | Accepted |
