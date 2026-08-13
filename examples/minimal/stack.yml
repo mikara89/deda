@@ -31,7 +31,7 @@ services:
   # DEDA container never needs root access or a direct socket mount.
   # See: docs/adr/0004-docker-socket-proxy.md
   docker-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
     networks: [deda_net]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

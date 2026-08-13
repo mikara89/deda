@@ -161,6 +161,35 @@ public sealed class AutoscalerControllerTests
     }
 
     [Fact]
+    public async Task Reconcile_StandbyDoesNotDiscoverServicesOrApplyReplicaUpdates()
+    {
+        var fixture = new Fixture(leader: new FakeLeaderElector(false));
+        fixture.Swarm.Services = [Service("worker")];
+        fixture.Policy.DesiredReplicas = 3;
+
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        Assert.Equal(0, fixture.Swarm.ListCallCount);
+        Assert.Empty(fixture.Updates.Updates);
+    }
+
+    [Fact]
+    public async Task Reconcile_LostLeadershipBeforeMutationPreventsReplicaUpdate()
+    {
+        var leader = new FakeLeaderElector(true, false);
+        var fixture = new Fixture(leader: leader);
+        fixture.Swarm.Services = [Service("worker")];
+        fixture.Registry.Adapter = new FakeAdapter(
+            (_, _, _) => Task.FromResult(TriggerResult.Ok(30)));
+        fixture.Policy.DesiredReplicas = 3;
+
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        Assert.Equal(2, leader.CallCount);
+        Assert.Empty(fixture.Updates.Updates);
+    }
+
+    [Fact]
     public async Task Reconcile_GlobalServicesAreIgnored()
     {
         var fixture = new Fixture();
@@ -216,7 +245,7 @@ public sealed class AutoscalerControllerTests
         public RecordingUpdateStrategy Updates { get; } = new();
         public AutoscalerController Controller { get; }
 
-        public Fixture(HostOptions? hostOptions = null)
+        public Fixture(HostOptions? hostOptions = null, ILeaderElector? leader = null)
         {
             Controller = new AutoscalerController(
                 Swarm,
@@ -226,7 +255,20 @@ public sealed class AutoscalerControllerTests
                 StateStore,
                 Telemetry,
                 Updates,
-                hostOptions ?? new HostOptions(10, 0, false));
+                hostOptions ?? new HostOptions(10, 0, false),
+                leader);
+        }
+    }
+
+    private sealed class FakeLeaderElector(params bool[] results) : ILeaderElector
+    {
+        private int _index;
+        public int CallCount => _index;
+
+        public Task<bool> IsLeaderAsync(CancellationToken ct)
+        {
+            var index = Interlocked.Increment(ref _index) - 1;
+            return Task.FromResult(results[Math.Min(index, results.Length - 1)]);
         }
     }
 
@@ -234,9 +276,11 @@ public sealed class AutoscalerControllerTests
     {
         public IReadOnlyList<ServiceRef> Services { get; set; } = [];
         public Exception? ListException { get; set; }
+        public int ListCallCount { get; private set; }
 
         public Task<IReadOnlyList<ServiceRef>> ListServicesAsync(CancellationToken ct)
         {
+            ListCallCount++;
             ct.ThrowIfCancellationRequested();
             return ListException is null
                 ? Task.FromResult(Services)

@@ -2,81 +2,128 @@ using Deda.Config.Labels;
 using Deda.Controller;
 using Deda.Core;
 using Deda.Host;
+using Deda.HA;
+using Deda.Observability;
 using Deda.Policies;
 using Deda.Swarm;
 using Deda.Triggers.Abstractions;
+using Deda.Triggers.Http;
 using Deda.Triggers.Prometheus;
 using Deda.Triggers.RabbitMq;
 using Deda.Updates;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using StackExchange.Redis;
 
-var builder = Host.CreateApplicationBuilder(args);
-
-// Controller
-builder.Services.AddSingleton<AutoscalerController>();
-
-builder.Services.AddSingleton(sp =>
-{
-    // Single HttpClient instance for Docker Engine API
-    return DockerEndpoint.CreateHttpClientFromEnvironment();
-});
-
-builder.Services.AddSingleton<ISwarmServiceClient, DockerEngineSwarmServiceClient>();
-
-// Real label config provider
-builder.Services.AddSingleton<IScaleConfigProvider, LabelScaleConfigProvider>();
-
+var builder = WebApplication.CreateSlimBuilder(args);
 var opts = DedaHostOptions.FromEnvironment();
 builder.Services.AddSingleton(opts);
+builder.WebHost.UseUrls($"http://0.0.0.0:{opts.HttpPort}");
 
-// Metrics + readiness + API server
-builder.Services.AddSingleton<IMetricsRegistry, MetricsRegistry>();
+var otlpEnabled = !string.IsNullOrWhiteSpace(
+    Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT"));
+builder.Services
+    .AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(
+        serviceName: "deda",
+        serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString()))
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddMeter(DedaDiagnostics.SourceName)
+            .AddPrometheusExporter();
+        if (otlpEnabled)
+            metrics.AddOtlpExporter();
+    })
+    .WithTracing(tracing =>
+    {
+        tracing.AddSource(DedaDiagnostics.SourceName);
+        if (otlpEnabled)
+            tracing.AddOtlpExporter();
+    });
+
+builder.Services.AddSingleton<AutoscalerController>();
+builder.Services.AddSingleton(_ => DockerEndpoint.CreateHttpClientFromEnvironment());
+builder.Services.AddSingleton<ISwarmServiceClient, DockerEngineSwarmServiceClient>();
+builder.Services.AddSingleton<IScaleConfigProvider, LabelScaleConfigProvider>();
 builder.Services.AddSingleton<ReconciliationHealthState>();
 builder.Services.AddSingleton<IReconciliationHealth>(sp => sp.GetRequiredService<ReconciliationHealthState>());
-builder.Services.AddHostedService<ApiServerHostedService>();
-
-builder.Services.AddSingleton(new Deda.Controller.HostOptions(opts.PollSeconds, opts.MaxServicesPerCycle, opts.JitterEnabled));
+builder.Services.AddSingleton(new Deda.Controller.HostOptions(
+    opts.PollSeconds,
+    opts.MaxServicesPerCycle,
+    opts.JitterEnabled));
 builder.Services.AddSingleton(new ReconcileLoopOptions(
     TimeSpan.FromSeconds(opts.PollSeconds),
     TimeSpan.FromSeconds(opts.MaxReconcileBackoffSeconds)));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ResilientReconcileRunner>();
 
-builder.Services.AddHttpClient("rabbitmq", c =>
+if (opts.RedisConnectionString is not null)
 {
-    c.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds);
-});
+    if (opts.LeaderRenewSeconds >= opts.LeaderLeaseSeconds)
+        throw new InvalidOperationException("DEDA_LEADER_RENEW_SECONDS must be shorter than DEDA_LEADER_LEASE_SECONDS.");
 
-// RabbitMQ trigger + creds provider
+    builder.Services.AddSingleton(new RedisLeaderOptions(
+        opts.LeaderLockKey,
+        opts.LeaderInstanceId,
+        TimeSpan.FromSeconds(opts.LeaderLeaseSeconds),
+        TimeSpan.FromSeconds(opts.LeaderRenewSeconds)));
+    builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+    {
+        var configuration = ConfigurationOptions.Parse(opts.RedisConnectionString);
+        configuration.AbortOnConnectFail = false;
+        return ConnectionMultiplexer.Connect(configuration);
+    });
+    builder.Services.AddSingleton<ILeaderLeaseStore, RedisLeaderLeaseStore>();
+    builder.Services.AddSingleton<RedisLeaderElector>();
+    builder.Services.AddSingleton<ILeaderElector>(sp => sp.GetRequiredService<RedisLeaderElector>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<RedisLeaderElector>());
+}
+
+builder.Services.AddHttpClient("rabbitmq", client =>
+    client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
 builder.Services.AddSingleton<ISecretResolver>(new DockerSecretFileResolver(opts.SecretsDirectory));
 builder.Services.AddSingleton<IRabbitMqCredentialsProvider, EnvOrFileRabbitMqCredentialsProvider>();
 builder.Services.AddSingleton<ITriggerAdapter, RabbitMqTriggerAdapter>();
 
-// Prometheus trigger (example of a second trigger type, sharing the same HttpClientFactory)
-builder.Services.AddHttpClient("prometheus", c =>
-{
-    c.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds);
-});
+builder.Services.AddHttpClient("prometheus", client =>
+    client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
 builder.Services.AddSingleton<ITriggerAdapter, PrometheusTriggerAdapter>();
-
-// Trigger registry
+builder.Services.AddHttpClient("http", client =>
+    client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
+builder.Services.AddSingleton<ITriggerAdapter, HttpTriggerAdapter>();
 builder.Services.AddSingleton<ITriggerAdapterRegistry>(sp =>
-    new TriggerAdapterRegistry(sp.GetServices<ITriggerAdapter>())
-);
+    new TriggerAdapterRegistry(sp.GetServices<ITriggerAdapter>()));
 
-// Scaling policy
 builder.Services.AddSingleton<IScalePolicy, SimpleScalePolicyMvp>();
-
-// State store (in-memory MVP)
-builder.Services.AddSingleton<IStateStore<string, ServiceScaleState>, InMemoryStateStoreMvp>();
-
-// �No telemetry� (just logs)
-builder.Services.AddSingleton<IAutoscalerTelemetry, ConsoleTelemetryMvp>();
-
-// Update strategy (real)
+builder.Services.AddSingleton<IStateStore<string, ServiceScaleState>, InMemoryStateStore>();
+builder.Services.AddSingleton<IAutoscalerTelemetry, OpenTelemetryAutoscalerTelemetry>();
 builder.Services.AddSingleton<IServiceUpdateStrategy, RetryOnVersionConflictUpdateStrategy>();
-
-// Worker loop
 builder.Services.AddHostedService<Worker>();
 
-var host = builder.Build();
-await host.RunAsync();
+var app = builder.Build();
+if (opts.RedisConnectionString is null)
+{
+    app.Logger.LogWarning(
+        "High availability is disabled. Run exactly one DEDA replica or configure DEDA_REDIS_CONNECTION.");
+}
+app.MapPrometheusScrapingEndpoint("/metrics");
+app.MapGet("/health/live", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health/ready", (IReconciliationHealth healthState) =>
+{
+    var health = healthState.Snapshot();
+    return health.IsReady
+        ? Results.Ok(new
+        {
+            status = "ready",
+            lastAttemptUtc = health.LastAttemptUtc,
+            lastSuccessfulUtc = health.LastSuccessfulUtc,
+        })
+        : Results.Problem(
+            title: "Reconciliation is not healthy",
+            detail: health.LastError ?? "No successful reconciliation has completed.",
+            statusCode: 503);
+});
+
+await app.RunAsync();

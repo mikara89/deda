@@ -20,9 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Deda.Core\Deda.Core.csproj" />
-    <ProjectReference Include="..\..\src\Deda.Triggers.Prometheus\Deda.Triggers.Prometheus.csproj" />
-    <ProjectReference Include="..\..\src\Deda.Triggers.Http\Deda.Triggers.Http.csproj" />
-    <ProjectReference Include="..\..\src\Deda.Triggers.RabbitMq\Deda.Triggers.RabbitMq.csproj" />
+    <ProjectReference Include="..\..\src\Deda.Observability\Deda.Observability.csproj" />
   </ItemGroup>
 
 </Project>

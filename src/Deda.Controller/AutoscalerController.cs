@@ -1,5 +1,7 @@
 ﻿using Deda.Core;
 
+using System.Diagnostics;
+
 namespace Deda.Controller
 {
 
@@ -51,7 +53,11 @@ namespace Deda.Controller
 
             var now = DateTimeOffset.UtcNow;
 
-            var services = await _swarm.ListServicesAsync(ct).ConfigureAwait(false);
+            IReadOnlyList<ServiceRef> services;
+            using (_telemetry.StartOperation("discover services"))
+            {
+                services = await _swarm.ListServicesAsync(ct).ConfigureAwait(false);
+            }
 
             var list = services;
 
@@ -76,6 +82,8 @@ namespace Deda.Controller
 
                 try
                 {
+                    using var serviceOperation = _telemetry.StartOperation("service evaluation", svc.Name);
+
                     if (svc.Mode == SwarmServiceMode.Global)
                         continue;
 
@@ -98,15 +106,38 @@ namespace Deda.Controller
 
                     var state = _stateStore.GetOrAdd(svc.ServiceId);
 
-                    var trigger = await adapter.GetWorkAsync(svc, cfg, ct).ConfigureAwait(false);
+                    TriggerResult trigger;
+                    var triggerStarted = Stopwatch.GetTimestamp();
+                    using (_telemetry.StartOperation("trigger", svc.Name, cfg.TriggerType))
+                    {
+                        trigger = await adapter.GetWorkAsync(svc, cfg, ct).ConfigureAwait(false);
+                    }
+                    _telemetry.RecordTrigger(
+                        svc.Name,
+                        cfg.TriggerType,
+                        Stopwatch.GetElapsedTime(triggerStarted),
+                        trigger);
 
-                    var decision = _policy.Decide(svc, cfg, trigger, state, now);
+                    ScaleDecision decision;
+                    using (_telemetry.StartOperation("scale decision", svc.Name, cfg.TriggerType))
+                    {
+                        decision = _policy.Decide(svc, cfg, trigger, state, now);
+                    }
                     _telemetry.RecordDecision(decision);
 
                     if (decision.DesiredReplicas != decision.CurrentReplicas)
                     {
-                        await _updates.ApplyDesiredReplicasAsync(_swarm, svc, decision.DesiredReplicas, ct)
-                            .ConfigureAwait(false);
+                        // Re-check immediately before the mutating call. The Redis
+                        // heartbeat can revoke leadership during a long trigger request.
+                        if (_leader is not null &&
+                            !await _leader.IsLeaderAsync(ct).ConfigureAwait(false))
+                            return;
+
+                        using (_telemetry.StartOperation("update replicas", svc.Name, cfg.TriggerType))
+                        {
+                            await _updates.ApplyDesiredReplicasAsync(_swarm, svc, decision.DesiredReplicas, ct)
+                                .ConfigureAwait(false);
+                        }
 
                         if (decision.DesiredReplicas > decision.CurrentReplicas)
                             state.LastScaleUpUtc = now;

@@ -15,6 +15,12 @@
         public bool JitterEnabled { get; init; } = true;
         public int MaxReconcileBackoffSeconds { get; init; } = 60;
         public string SecretsDirectory { get; init; } = "/run/secrets";
+        public int HttpPort { get; init; } = 8080;
+        public string? RedisConnectionString { get; init; }
+        public string LeaderLockKey { get; init; } = "deda:leader";
+        public string LeaderInstanceId { get; init; } = $"{Environment.MachineName}-{Environment.ProcessId}";
+        public int LeaderLeaseSeconds { get; init; } = 30;
+        public int LeaderRenewSeconds { get; init; } = 10;
 
         public static DedaHostOptions FromEnvironment()
         {
@@ -27,6 +33,14 @@
                 JitterEnabled = ReadBool("DEDA_JITTER_ENABLED", true),
                 MaxReconcileBackoffSeconds = ReadInt("DEDA_MAX_RECONCILE_BACKOFF_SECONDS", 60, 1, 3600),
                 SecretsDirectory = ReadString("DEDA_SECRETS_DIRECTORY", "/run/secrets"),
+                HttpPort = ReadInt("DEDA_HTTP_PORT", 8080, 1, 65535),
+                RedisConnectionString = ReadOptionalString("DEDA_REDIS_CONNECTION"),
+                LeaderLockKey = ReadString("DEDA_LEADER_LOCK_KEY", "deda:leader"),
+                LeaderInstanceId = ReadString(
+                    "DEDA_INSTANCE_ID",
+                    $"{Environment.MachineName}-{Environment.ProcessId}"),
+                LeaderLeaseSeconds = ReadInt("DEDA_LEADER_LEASE_SECONDS", 30, 5, 300),
+                LeaderRenewSeconds = ReadInt("DEDA_LEADER_RENEW_SECONDS", 10, 1, 299),
             };
         }
 
@@ -49,6 +63,12 @@
         {
             var value = Environment.GetEnvironmentVariable(key);
             return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+        }
+
+        private static string? ReadOptionalString(string key)
+        {
+            var value = Environment.GetEnvironmentVariable(key);
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
     }
 }

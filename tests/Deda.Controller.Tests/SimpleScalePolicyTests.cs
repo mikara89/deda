@@ -15,7 +15,7 @@ public class SimpleScalePolicyTests
         int min = 0, int max = 20,
         double targetPerReplica = 10, double activationThreshold = 2,
         int cooldownSeconds = 60, int scaleDownDelaySeconds = 30,
-        int stepUp = 10, int stepDown = 5) =>
+        int stepUp = 10, int stepDown = 5, int scaleToZeroGraceSeconds = 0) =>
         new()
         {
             Enabled = true,
@@ -25,6 +25,7 @@ public class SimpleScalePolicyTests
             ActivationThreshold = activationThreshold,
             CooldownSeconds = cooldownSeconds,
             ScaleDownDelaySeconds = scaleDownDelaySeconds,
+            ScaleToZeroGraceSeconds = scaleToZeroGraceSeconds,
             StepUp = stepUp,
             StepDown = stepDown,
             TriggerType = "fake",
@@ -163,6 +164,46 @@ public class SimpleScalePolicyTests
         var decision = policy.Decide(Svc(10), cfg, TriggerResult.Ok(50), new(), Now);
 
         Assert.Equal(5, decision.DesiredReplicas);
+    }
+
+    [Fact]
+    public void ScaleToZeroGrace_HoldsReplicasUntilGraceElapses()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(
+            cooldownSeconds: 0,
+            scaleDownDelaySeconds: 0,
+            stepDown: 0,
+            scaleToZeroGraceSeconds: 30);
+        var state = new ServiceScaleState();
+
+        var first = policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now);
+        var held = policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now.AddSeconds(29));
+        var released = policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now.AddSeconds(30));
+
+        Assert.Equal(5, first.DesiredReplicas);
+        Assert.Equal(5, held.DesiredReplicas);
+        Assert.Equal(0, released.DesiredReplicas);
+        Assert.Contains("scaleToZeroGraceBlocked=True", held.Reason);
+    }
+
+    [Fact]
+    public void ActiveWorkResetsScaleToZeroGrace()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(
+            cooldownSeconds: 0,
+            scaleDownDelaySeconds: 0,
+            stepDown: 0,
+            scaleToZeroGraceSeconds: 30);
+        var state = new ServiceScaleState();
+
+        policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now);
+        policy.Decide(Svc(5), cfg, TriggerResult.Ok(50), state, Now.AddSeconds(20));
+        var inactiveAgain = policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now.AddSeconds(31));
+
+        Assert.Equal(5, inactiveAgain.DesiredReplicas);
+        Assert.Equal(Now.AddSeconds(31), state.InactiveSinceUtc);
     }
 
     [Fact]

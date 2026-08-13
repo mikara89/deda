@@ -1,4 +1,5 @@
 using Deda.Core;
+using System.Diagnostics;
 
 namespace Deda.Controller
 {
@@ -32,12 +33,15 @@ namespace Deda.Controller
         public async Task<TimeSpan> RunOnceAsync(CancellationToken ct)
         {
             _health.RecordAttempt(_timeProvider.GetUtcNow());
+            var started = Stopwatch.GetTimestamp();
+            using var operation = _telemetry.StartOperation("reconcile");
 
             try
             {
                 await _controller.ReconcileOnceAsync(ct).ConfigureAwait(false);
                 _consecutiveFailures = 0;
                 _health.RecordSuccess(_timeProvider.GetUtcNow());
+                _telemetry.RecordReconcile(Stopwatch.GetElapsedTime(started), success: true);
                 return NormalizeDelay(_options.PollInterval);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -49,6 +53,7 @@ namespace Deda.Controller
                 _consecutiveFailures++;
                 _health.RecordFailure(_timeProvider.GetUtcNow(), ex);
                 _telemetry.RecordError("controller", "reconcile_loop", ex);
+                _telemetry.RecordReconcile(Stopwatch.GetElapsedTime(started), success: false);
                 return CalculateFailureBackoff();
             }
         }

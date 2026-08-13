@@ -1,34 +1,35 @@
-name: Build & Publish Docker Image
-
-# Builds a NativeAOT multi-arch (linux/amd64 + linux/arm64) image and pushes
-# to GitHub Container Registry (ghcr.io).
-#
-# NativeAOT cannot use QEMU emulation — each platform must be built on a
-# native runner. Each matrix job pushes its image by digest only; the merge
-# job stitches them into a single multi-arch manifest and applies all tags.
-#
-# Tag strategy:
-#   push to main  → ghcr.io/mikara89/deda:latest
-#   tag v1.2.3    → ghcr.io/mikara89/deda:1.2.3  (+ :1.2  + :1  + :latest)
-#   pull_request  → build-only, no push
+name: Build, Scan & Publish Docker Image
 
 on:
   push:
     branches: [main]
     tags: ["v*.*.*"]
-  pull_request:
-    branches: [main]
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}   # mikara89/deda → ghcr.io/mikara89/deda
+  IMAGE_NAME: ${{ github.repository }}
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Job 1 — Build one platform per native runner, push image by digest
-# ──────────────────────────────────────────────────────────────────────────────
+permissions:
+  contents: read
+
 jobs:
+  quality:
+    name: Build, test, and real Swarm verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet restore Deda.sln
+      - run: dotnet build Deda.sln --no-restore --configuration Release
+      - run: dotnet test Deda.sln --no-build --configuration Release
+      - run: bash tests/swarm/run-e2e.sh
+
   build:
     name: Build (${{ matrix.platform }})
+    needs: quality
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -39,38 +40,34 @@ jobs:
             runner: ubuntu-latest
           - platform: linux/arm64
             targetrid: linux-arm64
-            runner: ubuntu-24.04-arm   # GitHub-hosted native ARM64 runner
-
+            runner: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Labels only here — final tags are applied in the merge job
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      # Push by digest (no tag) so the merge job can combine both platforms
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: src/Deda.Host/Dockerfile
@@ -82,62 +79,55 @@ jobs:
             name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},
             push-by-digest=true,
             name-canonical=true,
-            push=${{ github.event_name != 'pull_request' }}
-          # Scope cache per platform to avoid cross-contamination
+            push=true
           cache-from: type=gha,scope=build-${{ matrix.targetrid }}
           cache-to: type=gha,mode=max,scope=build-${{ matrix.targetrid }}
 
       - name: Export digest
-        if: github.event_name != 'pull_request'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digest-${{ matrix.targetrid }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Job 2 — Merge both digests into a single multi-arch manifest
-# ──────────────────────────────────────────────────────────────────────────────
   merge:
     name: Merge multi-arch manifest
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name != 'pull_request'
-
     permissions:
       contents: read
       packages: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: Download digest artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: /tmp/digests
           pattern: digest-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Full tag set resolved here once, applied atomically to the manifest
-      - name: Extract metadata (tags + labels)
+      - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -149,12 +139,135 @@ jobs:
       - name: Create and push multi-arch manifest
         working-directory: /tmp/digests
         run: |
-          # shellcheck disable=SC2046  # word splitting intentional — expands tags and digests as separate args
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Inspect manifest
+        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+
+  security:
+    name: Scan and sign image
+    runs-on: ubuntu-latest
+    needs: merge
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+      id-token: write
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.merge.outputs.version }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Upload vulnerability report
+        if: always()
+        uses: github/codeql-action/upload-sarif@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e # v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Install Cosign
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
+
+      - name: Sign immutable image digest
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.merge.outputs.version }}
         run: |
-          docker buildx imagetools inspect \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          digest=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' | jq -r '.digest')
+          test -n "$digest" && test "$digest" != "null"
+          cosign sign --yes "${IMAGE%:*}@${digest}"
+
+  linux-binaries:
+    name: NativeAOT ${{ matrix.rid }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: quality
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-latest
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Publish
+        run: dotnet publish src/tools/Docker.Deda.Cli/Docker.Deda.Cli.csproj -c Release -r ${{ matrix.rid }} -o publish /p:PublishAot=true /p:SelfContained=true /p:StripSymbols=true
+      - run: tar -C publish -czf docker-deda-${{ matrix.rid }}.tar.gz .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docker-deda-${{ matrix.rid }}
+          path: docker-deda-${{ matrix.rid }}.tar.gz
+
+  windows-binary:
+    name: NativeAOT win-x64
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: quality
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Publish
+        run: dotnet publish src/tools/Docker.Deda.Cli/Docker.Deda.Cli.csproj -c Release -r win-x64 -o publish /p:PublishAot=true /p:SelfContained=true /p:StripSymbols=true
+      - shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath docker-deda-win-x64.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docker-deda-win-x64
+          path: docker-deda-win-x64.zip
+
+  release:
+    name: Checksums, SBOM, provenance, and GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [security, linux-binaries, windows-binary]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          pattern: docker-deda-*
+          merge-multiple: true
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: artifacts
+          output-file: artifacts/sbom.spdx.json
+          format: spdx-json
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > checksums.txt
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: artifacts/*
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --verify-tag --generate-notes --title "$GITHUB_REF_NAME"

@@ -148,4 +148,31 @@ public class LabelScaleConfigProviderTests
         Assert.Null(cfg);
         Assert.False(string.IsNullOrWhiteSpace(error));
     }
+
+    [Fact]
+    public void ScaleToZeroGraceSeconds_IsParsed()
+    {
+        var labels = MinimalLabels();
+        labels["com.deda.autoscale.scaleToZeroGraceSeconds"] = "45";
+
+        var cfg = new LabelScaleConfigProvider().TryGetConfig(Svc(labels), out var error);
+
+        Assert.NotNull(cfg);
+        Assert.Null(error);
+        Assert.Equal(45, cfg.ScaleToZeroGraceSeconds);
+    }
+
+    [Theory]
+    [InlineData("com.deda.autoscale.scaleDownDelaySeconds")]
+    [InlineData("com.deda.autoscale.scaleToZeroGraceSeconds")]
+    public void TimeWindowsLongerThanOneDayAreRejected(string label)
+    {
+        var labels = MinimalLabels();
+        labels[label] = "86401";
+
+        var cfg = new LabelScaleConfigProvider().TryGetConfig(Svc(labels), out var error);
+
+        Assert.Null(cfg);
+        Assert.Contains("86400", error);
+    }
 }
