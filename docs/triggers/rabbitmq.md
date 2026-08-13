@@ -22,7 +22,7 @@ All names use the `com.deda.autoscale.` prefix.
 | `trigger.vhost` | No | `/` | RabbitMQ virtual host |
 | `trigger.metric` | No | `messages` | Documented metrics: `messages`, `messages_ready`, `messages_unacknowledged` |
 | `trigger.timeoutSeconds` | No | `5` | Positive integer seconds |
-| `trigger.credentialsSecret` | No | Global credentials | One mounted Docker secret name containing `username:password` |
+| `trigger.credentialsRef` | No | Global credentials | Operator-owned credential-policy binding name |
 
 The response property must be numeric and the final value must be finite and
 non-negative. HTTP errors, missing properties, invalid JSON, credential errors,
@@ -99,25 +99,54 @@ printf '%s' 'orders-user:replace-with-a-generated-password' \
   | docker secret create orders-rabbitmq -
 ```
 
-Mount it on DEDA and reference only its file name from the scaled service:
+Mount it on DEDA and configure an operator-owned credential policy. The scaled
+service can reference a binding name, but cannot choose a mounted secret or an
+arbitrary endpoint:
 
 ```yaml
 services:
   deda:
     environment:
       DEDA_SECRETS_DIRECTORY: /run/secrets
+      DEDA_CREDENTIAL_POLICY_FILE: /run/deda/credential-policy.json
     secrets:
       - orders-rabbitmq
+    configs:
+      - source: deda-credential-policy
+        target: /run/deda/credential-policy.json
 
   worker:
     deploy:
       labels:
-        com.deda.autoscale.trigger.credentialsSecret: "orders-rabbitmq"
+        com.deda.autoscale.trigger.credentialsRef: "orders"
 
 secrets:
   orders-rabbitmq:
     external: true
+configs:
+  deda-credential-policy:
+    file: ./credential-policy.json
 ```
+
+`credential-policy.json` is controlled by the DEDA operator:
+
+```json
+{
+  "orders": {
+    "secret": "orders-rabbitmq",
+    "allowedHosts": ["rabbitmq.internal"],
+    "allowedServices": ["worker"]
+  }
+}
+```
+
+The binding requires an absolute `trigger.url`, an allowed host, and (when the
+policy lists services) a matching service name or ID. Unknown bindings, wrong
+hosts, malformed policy files, and path-traversal secret names fail closed.
+
+`trigger.credentialsSecret` is a legacy trusted-cluster option and is disabled
+by default. During migration only, set
+`DEDA_ALLOW_LEGACY_CREDENTIALS_SECRET=true` to re-enable it.
 
 DEDA reads `/run/secrets/orders-rabbitmq` by default, splits on the first colon,
 and uses the result only for that service. `DEDA_SECRETS_DIRECTORY` changes the

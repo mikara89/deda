@@ -16,7 +16,6 @@ namespace Deda.Updates
     {
         private readonly RetryOptions _options;
         private readonly IMutationGuard _guard;
-        private readonly Random _rng = new();
 
         public RetryOnVersionConflictUpdateStrategy(RetryOptions? options = null, IMutationGuard? guard = null)
         {
@@ -94,7 +93,7 @@ namespace Deda.Updates
 
             // Jitter: +/- JitterPercent
             var jitterRange = clamped * _options.JitterPercent;
-            var jitter = (_rng.NextDouble() * 2 - 1) * jitterRange;
+            var jitter = (Random.Shared.NextDouble() * 2 - 1) * jitterRange;
 
             var finalMs = Math.Max(0, clamped + jitter);
             return TimeSpan.FromMilliseconds(finalMs);

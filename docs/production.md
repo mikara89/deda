@@ -43,8 +43,11 @@ though Docker version-conflict retries reduce some conflicts.
 - Never put passwords in service labels.
 - Use Docker secrets and `RABBITMQ_USER_FILE` / `RABBITMQ_PASS_FILE` for a
   global RabbitMQ account.
-- Use `trigger.credentialsSecret` for a service-specific `username:password`
-  secret.
+- Use an operator-owned `trigger.credentialsRef` policy binding for a
+  service-specific `username:password` secret and an allowed RabbitMQ host.
+- `trigger.credentialsSecret` is legacy-only and disabled by default; enable it
+  temporarily only with `DEDA_ALLOW_LEGACY_CREDENTIALS_SECRET=true` in a
+  trusted cluster.
 - Mount only required secrets on DEDA and use least-privilege metric-source
   accounts.
 
@@ -67,8 +70,11 @@ deploy:
 
 These are examples, not guarantees. Service count, poll interval, metric
 latency, TLS, telemetry export, and reconciliation errors all affect resource
-use. Observe CPU, memory, reconcile duration, and trigger duration under peak
-fleet size before setting hard limits.
+use. Reconciliation evaluates at most `DEDA_MAX_CONCURRENT_SERVICES` services
+at once and is cancelled after `DEDA_RECONCILE_TIMEOUT_SECONDS`; readiness also
+expires when its last successful cycle exceeds its configured freshness age.
+Observe CPU, memory, reconcile duration, and trigger duration under peak fleet
+size before setting hard limits.
 
 ## Upgrade and restart behavior
 

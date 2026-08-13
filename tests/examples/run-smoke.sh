@@ -3,6 +3,8 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 ACTIVE_STACKS=()
+POLICY_CONTAINER=""
+POLICY_FILE=""
 
 remove_stack() {
   local stack=$1
@@ -20,6 +22,12 @@ remove_stack() {
 }
 
 cleanup() {
+  if [[ -n "$POLICY_CONTAINER" ]]; then
+    docker rm --force "$POLICY_CONTAINER" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$POLICY_FILE" ]]; then
+    rm -f "$POLICY_FILE"
+  fi
   for stack in "${ACTIVE_STACKS[@]}"; do
     remove_stack "$stack" || true
   done
@@ -93,6 +101,22 @@ deploy_stack() {
 }
 
 docker swarm init
+
+# The image is the NativeAOT host. Exercise the operator credential-policy
+# startup path against the actual published binary, not only unit-test code.
+POLICY_FILE=$(mktemp)
+printf '%s' '{"orders":{"secret":"orders-rabbitmq","allowedHosts":["rabbitmq.internal"],"allowedServices":["worker"]}}' > "$POLICY_FILE"
+POLICY_CONTAINER=$(docker run --detach --rm \
+  --publish 18081:18081 \
+  --env DEDA_HTTP_PORT=18081 \
+  --env DEDA_CREDENTIAL_POLICY_FILE=/run/deda/credential-policy.json \
+  --volume "$POLICY_FILE:/run/deda/credential-policy.json:ro" \
+  deda:examples)
+wait_http http://127.0.0.1:18081/health/live
+docker rm --force "$POLICY_CONTAINER" >/dev/null
+POLICY_CONTAINER=""
+rm -f "$POLICY_FILE"
+POLICY_FILE=""
 
 deploy_stack http-trigger deda-http
 wait_http http://127.0.0.1:8081/health/ready

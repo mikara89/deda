@@ -15,17 +15,42 @@ namespace Deda.Triggers.RabbitMq
         string Resolve(string secretName);
     }
 
-    public sealed record RabbitMqCredentialBinding(string Secret, IReadOnlySet<string> AllowedHosts, IReadOnlySet<string> AllowedServices);
+    public sealed record RabbitMqCredentialBinding(
+        string Secret,
+        IReadOnlySet<string> AllowedHosts,
+        IReadOnlySet<string> AllowedServices);
 
     public sealed class RabbitMqCredentialPolicy
     {
         private readonly IReadOnlyDictionary<string, RabbitMqCredentialBinding> _bindings;
-        public RabbitMqCredentialPolicy(IReadOnlyDictionary<string, RabbitMqCredentialBinding>? bindings = null) => _bindings = bindings ?? new Dictionary<string, RabbitMqCredentialBinding>(StringComparer.OrdinalIgnoreCase);
+
+        public RabbitMqCredentialPolicy(IReadOnlyDictionary<string, RabbitMqCredentialBinding>? bindings = null) =>
+            _bindings = bindings ?? new Dictionary<string, RabbitMqCredentialBinding>(StringComparer.OrdinalIgnoreCase);
+
         public static RabbitMqCredentialPolicy FromJsonFile(string? path)
         {
             if (string.IsNullOrWhiteSpace(path)) return new();
-            var document = JsonSerializer.Deserialize<Dictionary<string, CredentialPolicyDocument>>(File.ReadAllText(path)) ?? throw new InvalidOperationException("Credential policy file is empty or invalid.");
-            return new RabbitMqCredentialPolicy(document.ToDictionary(entry => entry.Key, entry => new RabbitMqCredentialBinding(entry.Value.Secret ?? throw new InvalidOperationException($"Credential '{entry.Key}' has no secret."), new HashSet<string>(entry.Value.AllowedHosts ?? [], StringComparer.OrdinalIgnoreCase), new HashSet<string>(entry.Value.AllowedServices ?? [], StringComparer.OrdinalIgnoreCase)), StringComparer.OrdinalIgnoreCase));
+
+            // JsonDocument is a DOM API and does not depend on reflection-based
+            // serialization metadata, so this remains safe in the NativeAOT host.
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException("Credential policy file must contain an object.");
+
+            var bindings = new Dictionary<string, RabbitMqCredentialBinding>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in document.RootElement.EnumerateObject())
+            {
+                if (entry.Value.ValueKind != JsonValueKind.Object)
+                    throw new InvalidOperationException($"Credential '{entry.Name}' must be an object.");
+
+                var secret = RequiredString(entry.Value, "secret", entry.Name);
+                bindings.Add(entry.Name, new RabbitMqCredentialBinding(
+                    secret,
+                    ReadStringSet(entry.Value, "allowedHosts", entry.Name),
+                    ReadStringSet(entry.Value, "allowedServices", entry.Name)));
+            }
+
+            return new RabbitMqCredentialPolicy(bindings);
         }
         public RabbitMqCredentialBinding Resolve(ServiceRef service, string reference, string url)
         {
@@ -35,7 +60,29 @@ namespace Deda.Triggers.RabbitMq
             if (binding.AllowedServices.Count > 0 && !binding.AllowedServices.Contains(service.Name) && !binding.AllowedServices.Contains(service.ServiceId)) throw new InvalidOperationException($"Service '{service.Name}' is not permitted to use credential reference '{reference}'.");
             return binding;
         }
-        private sealed class CredentialPolicyDocument { public string? Secret { get; init; } public string[]? AllowedHosts { get; init; } public string[]? AllowedServices { get; init; } }
+        private static string RequiredString(JsonElement entry, string property, string reference)
+        {
+            if (!entry.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString()))
+                throw new InvalidOperationException($"Credential '{reference}' must contain a non-empty '{property}'.");
+            return value.GetString()!.Trim();
+        }
+
+        private static IReadOnlySet<string> ReadStringSet(JsonElement entry, string property, string reference)
+        {
+            if (!entry.TryGetProperty(property, out var value))
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (value.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException($"Credential '{reference}' property '{property}' must be an array.");
+
+            var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in value.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+                    throw new InvalidOperationException($"Credential '{reference}' property '{property}' must contain non-empty strings.");
+                values.Add(item.GetString()!.Trim());
+            }
+            return values;
+        }
     }
 
     public sealed class DockerSecretFileResolver : ISecretResolver

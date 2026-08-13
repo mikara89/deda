@@ -117,16 +117,17 @@ namespace Deda.Controller
                         return;
                     }
 
-                    _managedServices[svc.ServiceId] = svc.Name;
-
                     if (!_triggers.TryResolve(cfg.TriggerType, out var adapter))
                     {
+                        RemoveManagedService(svc.ServiceId, svc.Name);
                         _telemetry.RecordError(
                             svc.Name,
                             "trigger",
                             new InvalidOperationException($"Unknown trigger type '{cfg.TriggerType}'."));
                         return;
                     }
+
+                    TrackManagedService(svc);
 
                     var state = _stateStore.GetOrAdd(svc.ServiceId);
 
@@ -185,6 +186,17 @@ namespace Deda.Controller
             {
                 _telemetry.RecordError(svc.Name, "reconcile", ex);
             }
+        }
+
+        private void TrackManagedService(ServiceRef service)
+        {
+            if (_managedServices.TryGetValue(service.ServiceId, out var previousName) &&
+                !string.Equals(previousName, service.Name, StringComparison.Ordinal))
+            {
+                _telemetry.RemoveService(service.ServiceId, previousName);
+            }
+
+            _managedServices[service.ServiceId] = service.Name;
         }
 
         private void RemoveManagedService(string serviceId, string fallbackName)

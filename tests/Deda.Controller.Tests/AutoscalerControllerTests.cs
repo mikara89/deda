@@ -158,6 +158,36 @@ public sealed class AutoscalerControllerTests
     }
 
     [Fact]
+    public async Task Reconcile_RenamedManagedServiceRemovesOldTelemetry()
+    {
+        var fixture = new Fixture();
+        fixture.Registry.Adapter = new FakeAdapter((_, _, _) => Task.FromResult(TriggerResult.Ok(0)));
+        var original = Service("worker-v1");
+        fixture.Swarm.Services = [original];
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        fixture.Swarm.Services = [original with { Name = "worker-v2" }];
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        Assert.Contains((original.ServiceId, "worker-v1"), fixture.Telemetry.RemovedServices);
+    }
+
+    [Fact]
+    public async Task Reconcile_UnknownTriggerRemovesPreviouslyManagedService()
+    {
+        var fixture = new Fixture();
+        fixture.Registry.Adapter = new FakeAdapter((_, _, _) => Task.FromResult(TriggerResult.Ok(0)));
+        var service = Service("worker");
+        fixture.Swarm.Services = [service];
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        fixture.Config.Config = ValidConfig() with { TriggerType = "unknown" };
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        Assert.Contains((service.ServiceId, service.Name), fixture.Telemetry.RemovedServices);
+    }
+
+    [Fact]
     public async Task Reconcile_AdapterCancellationIsNotSwallowedAsServiceError()
     {
         var fixture = new Fixture();
@@ -459,11 +489,15 @@ public sealed class AutoscalerControllerTests
     {
         public List<ScaleDecision> Decisions { get; } = [];
         public List<(string ServiceName, string Stage, Exception Exception)> Errors { get; } = [];
+        public List<(string ServiceId, string ServiceName)> RemovedServices { get; } = [];
 
         public void RecordDecision(ScaleDecision decision) => Decisions.Add(decision);
 
         public void RecordError(string serviceName, string stage, Exception ex) =>
             Errors.Add((serviceName, stage, ex));
+
+        public void RemoveService(string serviceId, string serviceName) =>
+            RemovedServices.Add((serviceId, serviceName));
     }
 
     private sealed class RecordingUpdateStrategy : IServiceUpdateStrategy
