@@ -106,13 +106,22 @@ docker swarm init
 # startup path against the actual published binary, not only unit-test code.
 POLICY_FILE=$(mktemp)
 printf '%s' '{"orders":{"secret":"orders-rabbitmq","allowedHosts":["rabbitmq.internal"],"allowedServices":["worker"]}}' > "$POLICY_FILE"
-POLICY_CONTAINER=$(docker run --detach --rm \
+# Mirror a read-only Docker config: the production image is non-root and must
+# be able to read the operator-supplied policy without running as root.
+chmod 0444 "$POLICY_FILE"
+POLICY_CONTAINER=$(docker run --detach \
   --publish 18081:18081 \
   --env DEDA_HTTP_PORT=18081 \
   --env DEDA_CREDENTIAL_POLICY_FILE=/run/deda/credential-policy.json \
   --volume "$POLICY_FILE:/run/deda/credential-policy.json:ro" \
   deda:examples)
-wait_http http://127.0.0.1:18081/health/live
+if ! wait_http http://127.0.0.1:18081/health/live; then
+  echo "Credential-policy NativeAOT container failed:" >&2
+  docker inspect "$POLICY_CONTAINER" \
+    --format 'status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' >&2 || true
+  docker logs "$POLICY_CONTAINER" >&2 || true
+  exit 1
+fi
 docker rm --force "$POLICY_CONTAINER" >/dev/null
 POLICY_CONTAINER=""
 rm -f "$POLICY_FILE"
