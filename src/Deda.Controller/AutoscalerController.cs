@@ -8,7 +8,8 @@ namespace Deda.Controller
     public sealed record HostOptions(
         int PollSeconds,
         int MaxServicesPerCycle,
-        bool JitterEnabled);
+        bool JitterEnabled,
+        int MaxConcurrentServices = 8);
     public sealed class AutoscalerController
     {
         private readonly ISwarmServiceClient _swarm;
@@ -20,6 +21,7 @@ namespace Deda.Controller
         private readonly IServiceUpdateStrategy _updates;
         private readonly ILeaderElector? _leader;
         private readonly HostOptions _hostOptions;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _managedServices = new(StringComparer.Ordinal);
 
         public AutoscalerController(
             ISwarmServiceClient swarm,
@@ -76,33 +78,56 @@ namespace Deda.Controller
                 list = TakeWrap(list, start, _hostOptions.MaxServicesPerCycle);
             }
 
-            foreach (var svc in list)
+            var queueStarted = Stopwatch.GetTimestamp();
+            await Parallel.ForEachAsync(list, new ParallelOptions
             {
-                ct.ThrowIfCancellationRequested();
+                CancellationToken = ct,
+                MaxDegreeOfParallelism = Math.Max(1, _hostOptions.MaxConcurrentServices)
+            }, async (svc, serviceCt) =>
+            {
+                await ReconcileServiceAsync(svc, now, serviceCt).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+            _telemetry.RecordServices(services.Count, list.Count, Stopwatch.GetElapsedTime(queueStarted));
 
-                try
+            var liveServiceIds = services.Select(s => s.ServiceId).ToHashSet(StringComparer.Ordinal);
+            foreach (var stale in _managedServices.Where(entry => !liveServiceIds.Contains(entry.Key)).ToArray())
+                RemoveManagedService(stale.Key, stale.Value);
+        }
+
+        private async Task ReconcileServiceAsync(ServiceRef svc, DateTimeOffset now, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
                 {
                     using var serviceOperation = _telemetry.StartOperation("service evaluation", svc.Name);
 
                     if (svc.Mode == SwarmServiceMode.Global)
-                        continue;
+                    {
+                        RemoveManagedService(svc.ServiceId, svc.Name);
+                        return;
+                    }
 
                     var cfg = _configProvider.TryGetConfig(svc, out var cfgError);
                     if (cfg is null)
                     {
+                        RemoveManagedService(svc.ServiceId, svc.Name);
                         if (!string.IsNullOrWhiteSpace(cfgError))
                             _telemetry.RecordError(svc.Name, "config", new InvalidOperationException(cfgError));
-                        continue;
+                        return;
                     }
 
                     if (!_triggers.TryResolve(cfg.TriggerType, out var adapter))
                     {
+                        RemoveManagedService(svc.ServiceId, svc.Name);
                         _telemetry.RecordError(
                             svc.Name,
                             "trigger",
                             new InvalidOperationException($"Unknown trigger type '{cfg.TriggerType}'."));
-                        continue;
+                        return;
                     }
+
+                    TrackManagedService(svc);
 
                     var state = _stateStore.GetOrAdd(svc.ServiceId);
 
@@ -146,21 +171,40 @@ namespace Deda.Controller
 
                         state.LastAppliedReplicas = decision.DesiredReplicas;
                     }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (LeaderElectionUnavailableException)
-                {
-                    // Infrastructure failure must reach the reconciliation runner so
-                    // readiness becomes unhealthy. False leadership is normal standby.
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _telemetry.RecordError(svc.Name, "reconcile", ex);
-                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (LeaderElectionUnavailableException)
+            {
+                // Infrastructure failure must reach the reconciliation runner so
+                // readiness becomes unhealthy. False leadership is normal standby.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _telemetry.RecordError(svc.Name, "reconcile", ex);
+            }
+        }
+
+        private void TrackManagedService(ServiceRef service)
+        {
+            if (_managedServices.TryGetValue(service.ServiceId, out var previousName) &&
+                !string.Equals(previousName, service.Name, StringComparison.Ordinal))
+            {
+                _telemetry.RemoveService(service.ServiceId, previousName);
+            }
+
+            _managedServices[service.ServiceId] = service.Name;
+        }
+
+        private void RemoveManagedService(string serviceId, string fallbackName)
+        {
+            if (_managedServices.TryRemove(serviceId, out var name))
+            {
+                _stateStore.Remove(serviceId);
+                _telemetry.RemoveService(serviceId, name);
             }
         }
 

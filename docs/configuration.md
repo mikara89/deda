@@ -14,7 +14,7 @@ All names below use the `com.deda.autoscale.` prefix.
 
 | Label | Type | Default | Allowed value | Behavior and example | Operational consideration |
 | --- | --- | --- | --- | --- | --- |
-| `enabled` | Boolean | Disabled | `true` or `false` | `"true"` opts the service in. Missing, invalid, or false values skip it. | Only replicated services are evaluated; global services are ignored. |
+| `enabled` | Boolean | Disabled | `true` or `false` | `"true"` opts the service in. Missing or false values skip it; an explicitly invalid value is a configuration error. | Only replicated services are evaluated; global services are ignored. |
 | `min` | Integer | `0` | `0`–`2147483647`, and no greater than `max` | Hard lower bound, for example `"1"`. | Use `0` only after reviewing scale-to-zero startup behavior. |
 | `max` | Integer | `50` | `0`–`2147483647`, and no less than `min` | Hard upper bound, for example `"20"`. | Choose a limit the workload and dependencies can sustain. |
 | `targetPerReplica` | Number | `50` | Finite and greater than `0` | Active-work recommendation is `ceil(work / targetPerReplica)`, for example `"25"`. | This is the main capacity assumption; measure it under load. |
@@ -24,20 +24,20 @@ All names below use the `com.deda.autoscale.` prefix.
 | `scaleToZeroGraceSeconds` | Integer | `0` | `0`–`86400` | Requires continuous inactivity before a positive replica count can reach zero, for example `"60"`. | Trigger failures reset inactivity evidence. Other downscale controls still apply. |
 | `stepUp` | Integer | `10` | At least `0` | Maximum replicas added per reconciliation. `"0"` means unlimited. | A small value slows response to bursts. |
 | `stepDown` | Integer | `5` | At least `0` | Maximum replicas removed per reconciliation. `"0"` means unlimited. | A small value provides a gradual drain. |
-| `failsafe` | String | `hold` | `hold`, `min`, or `max`; other values fall back to `hold` | Chooses the target when metric retrieval or validation fails, for example `"max"`. | See [fail-safe modes](#fail-safe-modes). |
+| `failsafe` | String | `hold` | `hold`, `min`, or `max` | Chooses the target when metric retrieval or validation fails, for example `"max"`. Explicit invalid values are configuration errors. | See [fail-safe modes](#fail-safe-modes). |
 | `trigger.type` | String | None | `rabbitmq`, `prometheus`, or `http` | Selects the adapter, for example `"rabbitmq"`. | Missing or unknown types are logged as service errors. |
 | `trigger.*` | String | Trigger-specific | See trigger guide | Supplies settings such as `trigger.timeoutSeconds: "5"`. | Labels are visible through the Docker API; never place passwords in them. |
 | `pollSeconds` | Integer | Ignored | Ignored | A value such as `"30"` has no effect; this is a deprecated compatibility label. | `DEDA_POLL_SECONDS` is the only reconciliation interval. |
 
-Malformed numeric labels currently fall back to that label's default before
-validation. Treat warning-free deployment review as important and quote all
-values in YAML.
+Missing scaling labels use their documented defaults. Explicit malformed numeric
+values and invalid enum values fail closed: DEDA logs a configuration error and
+does not autoscale that service.
 
 ## Trigger labels
 
 | Trigger | Required labels | Optional labels |
 | --- | --- | --- |
-| RabbitMQ | `trigger.type=rabbitmq`, `trigger.url`, `trigger.queue` | `trigger.vhost`, `trigger.metric`, `trigger.timeoutSeconds`, `trigger.credentialsSecret` |
+| RabbitMQ | `trigger.type=rabbitmq`, `trigger.url`, `trigger.queue` | `trigger.vhost`, `trigger.metric`, `trigger.timeoutSeconds`, `trigger.credentialsRef` |
 | Prometheus | `trigger.type=prometheus`, `trigger.url`, `trigger.query` | `trigger.timeoutSeconds` |
 | HTTP | `trigger.type=http`, `trigger.url` | `trigger.timeoutSeconds`, `trigger.valuePath` |
 
@@ -73,6 +73,11 @@ missing or unparsable values use the default.
 | `DEDA_LOG_DECISIONS` | `true` | Boolean | Retained host option. Decisions are currently logged through structured telemetry. |
 | `DEDA_HTTP_PORT` | `8080` | `1`–`65535` | Port for health and Prometheus endpoints. |
 | `DEDA_SECRETS_DIRECTORY` | `/run/secrets` | Non-empty path | Directory for named per-service credential secrets. |
+| `DEDA_CREDENTIAL_POLICY_FILE` | Disabled | Readable JSON file | Operator-owned RabbitMQ credential bindings used by `trigger.credentialsRef`. |
+| `DEDA_ALLOW_LEGACY_CREDENTIALS_SECRET` | `false` | Boolean | Temporarily enables legacy label-selected `trigger.credentialsSecret`; use only for trusted-cluster migration. |
+| `DEDA_MAX_CONCURRENT_SERVICES` | `8` | `1`–`256` | Maximum simultaneous service evaluations in one reconciliation cycle. |
+| `DEDA_RECONCILE_TIMEOUT_SECONDS` | `120` | `1`–`3600` seconds | Maximum duration of one reconciliation cycle. |
+| `DEDA_READINESS_MAX_AGE_SECONDS` | `60` | `1`–`3600` seconds | Readiness freshness floor; effective maximum age is at least three poll intervals. |
 | `RABBITMQ_USER` / `RABBITMQ_PASS` | None | Non-empty strings | Global RabbitMQ credentials; direct values take precedence over file variants. |
 | `RABBITMQ_USER_FILE` / `RABBITMQ_PASS_FILE` | None | Readable file paths | Global RabbitMQ credentials from mounted files. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Disabled | OTLP endpoint URI | Enables standard OpenTelemetry OTLP metrics and traces. |

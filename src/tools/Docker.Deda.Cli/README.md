@@ -28,7 +28,7 @@ The stack it deploys includes:
   [tecnativa/docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy)
   mounted on the Docker socket, exposing only the Swarm API calls DEDA needs
   (least-privilege access). DEDA never gets direct socket access.
-- **`deda`** — the autoscaler container, pointed at the proxy, configured
+- **`deda`** — the autoscaler container, pointed at the proxy by default, configured
   entirely via environment variables, with RabbitMQ credentials injected via
   Docker Swarm secrets.
 
@@ -95,11 +95,10 @@ echo -n "your-rabbitmq-password" | docker secret create rabbitmq_pass -
 If you use different secret names, pass `--rabbitmq-user-secret-name` and
 `--rabbitmq-pass-secret-name` to `install`.
 
-The generated stack mounts this global credential pair. DEDA also supports
-per-service `trigger.credentialsSecret` values containing `username:password`,
-but the current CLI does not add arbitrary per-service secrets to its generated
-stack. Extend the rendered deployment or use a repository example when you need
-multiple credential sets. See the [RabbitMQ guide](../../../docs/triggers/rabbitmq.md).
+The generated stack mounts this global credential pair. For per-service
+credentials, use the operator-owned `trigger.credentialsRef` policy documented
+in the [RabbitMQ guide](../../../docs/triggers/rabbitmq.md). The current CLI
+does not add arbitrary policy files or secrets to its generated stack.
 
 ---
 
@@ -117,6 +116,7 @@ docker deda install [options]
 | --------------------------------- | --------------- | ---------------------------------------------------------------- |
 | `--image <img>`                   | `deda:local`    | DEDA container image to deploy                                   |
 | `--stack <name>`                  | `deda`          | Docker stack name                                                |
+| `--docker-access proxy\|direct`   | `proxy`         | Docker API access mode; `direct` mounts the Unix socket and runs DEDA as root |
 | `--port <n>`                      | `8080`          | Published port for `/metrics` and `/health/*`                    |
 | `--poll <sec>`                    | `10`            | Global reconcile interval (`DEDA_POLL_SECONDS`)                  |
 | `--max-per-cycle <n>`             | `25`            | Max services processed per cycle (`DEDA_MAX_SERVICES_PER_CYCLE`) |
@@ -133,6 +133,10 @@ docker deda install \
   --port 8080 \
   --poll 15
 ```
+
+Use `--docker-access direct` only when you intentionally accept direct Docker
+socket access. It renders a socket mount, `DOCKER_HOST=unix:///var/run/docker.sock`,
+and root execution for deterministic initial socket permissions.
 
 ---
 

@@ -49,15 +49,19 @@ builder.Services.AddSingleton<AutoscalerController>();
 builder.Services.AddSingleton(_ => DockerEndpoint.CreateHttpClientFromEnvironment());
 builder.Services.AddSingleton<ISwarmServiceClient, DockerEngineSwarmServiceClient>();
 builder.Services.AddSingleton<IScaleConfigProvider, LabelScaleConfigProvider>();
-builder.Services.AddSingleton<ReconciliationHealthState>();
+builder.Services.AddSingleton(new ReconciliationHealthState(
+    TimeProvider.System,
+    TimeSpan.FromSeconds(Math.Max(opts.ReadinessMaxAgeSeconds, opts.PollSeconds * 3))));
 builder.Services.AddSingleton<IReconciliationHealth>(sp => sp.GetRequiredService<ReconciliationHealthState>());
 builder.Services.AddSingleton(new Deda.Controller.HostOptions(
     opts.PollSeconds,
     opts.MaxServicesPerCycle,
-    opts.JitterEnabled));
+    opts.JitterEnabled,
+    opts.MaxConcurrentServices));
 builder.Services.AddSingleton(new ReconcileLoopOptions(
     TimeSpan.FromSeconds(opts.PollSeconds),
-    TimeSpan.FromSeconds(opts.MaxReconcileBackoffSeconds)));
+    TimeSpan.FromSeconds(opts.MaxReconcileBackoffSeconds),
+    TimeSpan.FromSeconds(opts.ReconcileTimeoutSeconds)));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ResilientReconcileRunner>();
 
@@ -80,13 +84,16 @@ if (opts.RedisConnectionString is not null)
     builder.Services.AddSingleton<ILeaderLeaseStore, RedisLeaderLeaseStore>();
     builder.Services.AddSingleton<RedisLeaderElector>();
     builder.Services.AddSingleton<ILeaderElector>(sp => sp.GetRequiredService<RedisLeaderElector>());
+    builder.Services.AddSingleton<IMutationGuard>(sp => new LeaderMutationGuard(sp.GetRequiredService<ILeaderElector>()));
     builder.Services.AddHostedService(sp => sp.GetRequiredService<RedisLeaderElector>());
 }
 
 builder.Services.AddHttpClient("rabbitmq", client =>
     client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
 builder.Services.AddSingleton<ISecretResolver>(new DockerSecretFileResolver(opts.SecretsDirectory));
-builder.Services.AddSingleton<IRabbitMqCredentialsProvider, EnvOrFileRabbitMqCredentialsProvider>();
+builder.Services.AddSingleton(RabbitMqCredentialPolicy.FromJsonFile(opts.CredentialPolicyFile));
+builder.Services.AddSingleton<IRabbitMqCredentialsProvider>(sp => new EnvOrFileRabbitMqCredentialsProvider(
+    sp.GetRequiredService<ISecretResolver>(), sp.GetRequiredService<RabbitMqCredentialPolicy>(), opts.AllowLegacyCredentialsSecret));
 builder.Services.AddSingleton<ITriggerAdapter, RabbitMqTriggerAdapter>();
 
 builder.Services.AddHttpClient("prometheus", client =>
@@ -101,7 +108,8 @@ builder.Services.AddSingleton<ITriggerAdapterRegistry>(sp =>
 builder.Services.AddSingleton<IScalePolicy, SimpleScalePolicyMvp>();
 builder.Services.AddSingleton<IStateStore<string, ServiceScaleState>, InMemoryStateStore>();
 builder.Services.AddSingleton<IAutoscalerTelemetry, OpenTelemetryAutoscalerTelemetry>();
-builder.Services.AddSingleton<IServiceUpdateStrategy, RetryOnVersionConflictUpdateStrategy>();
+builder.Services.AddSingleton<IServiceUpdateStrategy>(sp => new RetryOnVersionConflictUpdateStrategy(
+    guard: sp.GetService<IMutationGuard>() ?? new NoOpMutationGuard()));
 builder.Services.AddHostedService<Worker>();
 
 var app = builder.Build();

@@ -63,6 +63,40 @@ public sealed class RabbitMqCredentialsProviderTests
         }
     }
 
+    [Fact]
+    public void CredentialReference_RequiresBoundServiceAndAllowedHost()
+    {
+        var policy = new RabbitMqCredentialPolicy(new Dictionary<string, RabbitMqCredentialBinding>
+        {
+            ["orders"] = new("orders-rabbitmq", new HashSet<string>(["rabbitmq.internal"]), new HashSet<string>(["worker"])),
+        });
+        var provider = new EnvOrFileRabbitMqCredentialsProvider(new RecordingSecretResolver("alice:secret"), policy, false);
+        var config = new ScaleConfig { TriggerConfig = new Dictionary<string, string> { ["credentialsRef"] = "orders", ["url"] = "http://rabbitmq.internal:15672" } };
+
+        Assert.Equal("alice", provider.Get(Service(), config).Username);
+        config = config with { TriggerConfig = new Dictionary<string, string> { ["credentialsRef"] = "orders", ["url"] = "http://attacker.example:15672" } };
+        Assert.Throws<InvalidOperationException>(() => provider.Get(Service(), config));
+    }
+
+    [Fact]
+    public void CredentialPolicyFile_ParsesOperatorBindings()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"deda-policy-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, """{"orders":{"secret":"orders-rabbitmq","allowedHosts":["rabbitmq.internal"],"allowedServices":["worker"]}}""");
+            var policy = RabbitMqCredentialPolicy.FromJsonFile(path);
+            var binding = policy.Resolve(Service(), "orders", "http://rabbitmq.internal:15672");
+
+            Assert.Equal("orders-rabbitmq", binding.Secret);
+            Assert.Contains("rabbitmq.internal", binding.AllowedHosts);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static ServiceRef Service() =>
         new("service-1", "worker", 1, new Dictionary<string, string>(), 1, SwarmServiceMode.Replicated);
 

@@ -65,6 +65,20 @@ public sealed class RetryOnVersionConflictUpdateStrategyTests
         Assert.Equal(2, swarm.GetCalls);
     }
 
+    [Fact]
+    public async Task LeadershipLostAfterConflict_PreventsRetryMutation()
+    {
+        var swarm = new ConflictSwarm(failuresBeforeSuccess: 1);
+        var guard = new CountingGuard(allowAttempts: 1);
+        var strategy = new RetryOnVersionConflictUpdateStrategy(NoDelay, guard);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            strategy.ApplyDesiredReplicasAsync(swarm, Service(version: 1), 5, CancellationToken.None));
+
+        Assert.Single(swarm.UpdateVersions);
+        Assert.Equal(2, guard.Calls);
+    }
+
     private static ServiceRef Service(long version) =>
         new("service-1", "worker", 1, new Dictionary<string, string>(), version, SwarmServiceMode.Replicated);
 
@@ -105,6 +119,17 @@ public sealed class RetryOnVersionConflictUpdateStrategyTests
             if (_updateCalls <= _failuresBeforeSuccess)
                 return Task.FromException(new InvalidOperationException("version conflict"));
 
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CountingGuard(int allowAttempts) : IMutationGuard
+    {
+        public int Calls { get; private set; }
+        public Task EnsureCanMutateAsync(CancellationToken ct)
+        {
+            Calls++;
+            if (Calls > allowAttempts) throw new InvalidOperationException("leadership lost");
             return Task.CompletedTask;
         }
     }

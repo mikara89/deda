@@ -53,7 +53,7 @@ internal static class Program
 docker deda - Swarm autoscaler installer (CLI plugin)
 
 Usage:
-  docker deda install   [--image <img>] [--stack <name>] [--port <p>] [--poll <sec>] [--max-per-cycle <n>] [--jitter true|false]
+  docker deda install   [--image <img>] [--stack <name>] [--docker-access proxy|direct] [--port <p>] [--poll <sec>] [--max-per-cycle <n>] [--jitter true|false]
   docker deda status    [--stack <name>]
   docker deda validate  [--stack <name>]
   docker deda upgrade   --image <img> [--stack <name>]
@@ -88,13 +88,14 @@ Examples:
             var poll = o.GetInt("--poll", 10);
             var maxPerCycle = o.GetInt("--max-per-cycle", 25);
             var jitter = o.GetBool("--jitter", true);
+            var dockerAccess = o.Get("--docker-access", "proxy");
             var rabbitUserSecretName = o.Get("--rabbitmq-user-secret-name", "rabbitmq_user");
             var rabbitPassSecretName = o.Get("--rabbitmq-pass-secret-name", "rabbitmq_pass");
 
             DockerCli.RequireDocker();
             DockerCli.RequireSwarmActive();
 
-            var yml = TemplateRender.Render(StackTemplate.Yaml, new Dictionary<string, string>
+            var yml = TemplateRender.Render(StackTemplate.ForDockerAccess(dockerAccess), new Dictionary<string, string>
             {
                 ["DEDA_IMAGE"] = image,
                 ["DEDA_PUBLISHED_PORT"] = port.ToString(),
@@ -133,6 +134,7 @@ Examples:
                 "--poll", o.Get("--poll", "10"),
                 "--max-per-cycle", o.Get("--max-per-cycle", "25"),
                 "--jitter", o.Get("--jitter", "true"),
+                "--docker-access", o.Get("--docker-access", "proxy"),
                 "--rabbitmq-user-secret-name", o.Get("--rabbitmq-user-secret-name", "rabbitmq_user"),
                 "--rabbitmq-pass-secret-name", o.Get("--rabbitmq-pass-secret-name", "rabbitmq_pass")
             ]);

@@ -23,9 +23,14 @@ namespace Deda.Observability
         internal static readonly Histogram<double> TriggerDuration = DedaDiagnostics.Meter.CreateHistogram<double>("deda_trigger_duration_seconds", "s");
         private static readonly Counter<long> ScaleDecisions = DedaDiagnostics.Meter.CreateCounter<long>("deda_scale_decisions_total");
         internal static readonly Counter<long> ScaleEvents = DedaDiagnostics.Meter.CreateCounter<long>("deda_scale_events_total");
+        private static readonly ObservableGauge<int> ServicesDiscovered = DedaDiagnostics.Meter.CreateObservableGauge("deda_services_discovered", () => _servicesDiscovered);
+        private static readonly ObservableGauge<int> ServicesEvaluated = DedaDiagnostics.Meter.CreateObservableGauge("deda_services_evaluated", () => _servicesEvaluated);
+        private static readonly Histogram<double> ReconcileQueueDuration = DedaDiagnostics.Meter.CreateHistogram<double>("deda_reconcile_queue_duration_seconds", "s");
         private static readonly ConcurrentDictionary<TriggerMetricKey, double> TriggerValues = new();
         private static readonly ConcurrentDictionary<string, int> CurrentReplicaValues = new(StringComparer.Ordinal);
         private static readonly ConcurrentDictionary<string, int> DesiredReplicaValues = new(StringComparer.Ordinal);
+        private static int _servicesDiscovered;
+        private static int _servicesEvaluated;
         internal static readonly ObservableGauge<double> TriggerValue = DedaDiagnostics.Meter.CreateObservableGauge(
             "deda_trigger_value",
             ObserveTriggerValues);
@@ -113,6 +118,21 @@ namespace Deda.Observability
             Activity.Current?.SetStatus(ActivityStatusCode.Error, ex.Message);
             Activity.Current?.AddException(ex);
             _logger.LogError(ex, "Autoscaler error for {ServiceName} during {Stage}", serviceName, stage);
+        }
+
+        public void RemoveService(string serviceId, string serviceName)
+        {
+            CurrentReplicaValues.TryRemove(serviceName, out _);
+            DesiredReplicaValues.TryRemove(serviceName, out _);
+            foreach (var key in TriggerValues.Keys.Where(key => key.ServiceName == serviceName))
+                TriggerValues.TryRemove(key, out _);
+        }
+
+        public void RecordServices(int discovered, int evaluated, TimeSpan queueDuration)
+        {
+            Volatile.Write(ref _servicesDiscovered, discovered);
+            Volatile.Write(ref _servicesEvaluated, evaluated);
+            ReconcileQueueDuration.Record(queueDuration.TotalSeconds);
         }
 
         private static IEnumerable<Measurement<double>> ObserveTriggerValues()

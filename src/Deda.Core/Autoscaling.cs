@@ -171,6 +171,8 @@
         IDisposable? StartOperation(string operation, string? serviceName = null, string? triggerType = null) => null;
         void RecordReconcile(TimeSpan duration, bool success) { }
         void RecordTrigger(string serviceName, string triggerType, TimeSpan duration, TriggerResult result) { }
+        void RemoveService(string serviceId, string serviceName) { }
+        void RecordServices(int discovered, int evaluated, TimeSpan queueDuration) { }
     }
 
     public sealed record ReconciliationHealthSnapshot(
@@ -193,6 +195,16 @@
     public interface ILeaderElector
     {
         Task<bool> IsLeaderAsync(CancellationToken ct);
+    }
+
+    public interface IMutationGuard
+    {
+        Task EnsureCanMutateAsync(CancellationToken ct);
+    }
+
+    public sealed class NoOpMutationGuard : IMutationGuard
+    {
+        public Task EnsureCanMutateAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
     public sealed class LeaderElectionUnavailableException : Exception

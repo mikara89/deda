@@ -1,5 +1,20 @@
 ﻿static class StackTemplate
 {
+    public static string ForDockerAccess(string access)
+    {
+        if (string.Equals(access, "proxy", StringComparison.OrdinalIgnoreCase)) return Yaml;
+        if (!string.Equals(access, "direct", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("--docker-access must be 'proxy' or 'direct'.");
+
+        var proxyStart = Yaml.IndexOf("  docker-proxy:", StringComparison.Ordinal);
+        var dedaStart = Yaml.IndexOf("  deda:", StringComparison.Ordinal);
+        var direct = Yaml.Remove(proxyStart, dedaStart - proxyStart);
+        return direct.Replace(
+            "    secrets:\n      - rabbitmq_user\n      - rabbitmq_pass",
+            "    user: \"0:0\" # deterministic socket access; see direct-mode documentation\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n    secrets:\n      - rabbitmq_user\n      - rabbitmq_pass")
+            .Replace("DOCKER_HOST: \"http://docker-proxy:2375\"", "DOCKER_HOST: \"unix:///var/run/docker.sock\"");
+    }
+
     public const string Yaml = @"
 version: ""3.8""
 
