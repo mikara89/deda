@@ -93,6 +93,42 @@ public sealed class AutoscalerControllerTests
     }
 
     [Fact]
+    public async Task Runner_StandbyIsReadyWhileLeaderStoreFailureIsUnready()
+    {
+        var standbyHealth = new ReconciliationHealthState();
+        var standbyFixture = new Fixture(leader: new FakeLeaderElector(false));
+        var standbyRunner = new ResilientReconcileRunner(
+            standbyFixture.Controller,
+            standbyHealth,
+            standbyFixture.Telemetry,
+            new ReconcileLoopOptions(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(60)),
+            new MutableTimeProvider(Now));
+
+        var standbyDelay = await standbyRunner.RunOnceAsync(CancellationToken.None);
+
+        Assert.True(standbyHealth.Snapshot().IsReady);
+        Assert.Equal(TimeSpan.FromSeconds(10), standbyDelay);
+        Assert.Equal(0, standbyFixture.Swarm.ListCallCount);
+
+        var unavailableHealth = new ReconciliationHealthState();
+        var unavailableFixture = new Fixture(leader: new UnavailableLeaderElector());
+        var unavailableRunner = new ResilientReconcileRunner(
+            unavailableFixture.Controller,
+            unavailableHealth,
+            unavailableFixture.Telemetry,
+            new ReconcileLoopOptions(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(60)),
+            new MutableTimeProvider(Now));
+
+        var unavailableDelay = await unavailableRunner.RunOnceAsync(CancellationToken.None);
+
+        var unavailable = unavailableHealth.Snapshot();
+        Assert.False(unavailable.IsReady);
+        Assert.Contains(nameof(LeaderElectionUnavailableException), unavailable.LastError);
+        Assert.Equal(TimeSpan.FromSeconds(10), unavailableDelay);
+        Assert.Equal(0, unavailableFixture.Swarm.ListCallCount);
+    }
+
+    [Fact]
     public async Task Reconcile_InvalidServiceConfigurationIsReportedClearly()
     {
         var fixture = new Fixture();
@@ -190,6 +226,21 @@ public sealed class AutoscalerControllerTests
     }
 
     [Fact]
+    public async Task Reconcile_LeaderStoreFailureBeforeMutationPropagates()
+    {
+        var fixture = new Fixture(leader: new UnavailableBeforeMutationElector());
+        fixture.Swarm.Services = [Service("worker")];
+        fixture.Registry.Adapter = new FakeAdapter(
+            (_, _, _) => Task.FromResult(TriggerResult.Ok(30)));
+        fixture.Policy.DesiredReplicas = 3;
+
+        await Assert.ThrowsAsync<LeaderElectionUnavailableException>(
+            () => fixture.Controller.ReconcileOnceAsync(CancellationToken.None));
+
+        Assert.Empty(fixture.Updates.Updates);
+    }
+
+    [Fact]
     public async Task Reconcile_GlobalServicesAreIgnored()
     {
         var fixture = new Fixture();
@@ -269,6 +320,29 @@ public sealed class AutoscalerControllerTests
         {
             var index = Interlocked.Increment(ref _index) - 1;
             return Task.FromResult(results[Math.Min(index, results.Length - 1)]);
+        }
+    }
+
+    private sealed class UnavailableLeaderElector : ILeaderElector
+    {
+        public Task<bool> IsLeaderAsync(CancellationToken ct) =>
+            Task.FromException<bool>(new LeaderElectionUnavailableException(
+                "Redis unavailable.",
+                new IOException("connection refused")));
+    }
+
+    private sealed class UnavailableBeforeMutationElector : ILeaderElector
+    {
+        private int _callCount;
+
+        public Task<bool> IsLeaderAsync(CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref _callCount) == 1)
+                return Task.FromResult(true);
+
+            return Task.FromException<bool>(new LeaderElectionUnavailableException(
+                "Redis unavailable.",
+                new IOException("connection refused")));
         }
     }
 

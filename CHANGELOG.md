@@ -22,3 +22,14 @@ All notable changes to DEDA are documented here. Releases follow
 
 - GitHub Actions are pinned to immutable commit SHAs.
 - Example socket-proxy images are pinned by digest.
+- Public image tags are created only after every architecture digest passes the
+  vulnerability gate; release signatures target the verified manifest digest.
+
+### Fixed
+
+- Trigger failures reset scale-to-zero inactivity evidence before the next
+  valid zero observation starts a new grace window.
+- Redis leader-store outages now make reconciliation readiness unhealthy rather
+  than appearing as a healthy standby.
+- Current replicas, desired replicas, and trigger value use observable gauges
+  instead of histograms.

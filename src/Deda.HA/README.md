@@ -11,9 +11,10 @@ unique and are used with the process ID when the variable is omitted.
 
 The defaults are a 30-second TTL and 10-second renewal interval. Override them
 with `DEDA_LEADER_LEASE_SECONDS`, `DEDA_LEADER_RENEW_SECONDS`, and
-`DEDA_LEADER_LOCK_KEY`. A Redis outage makes all instances stand by. On graceful
-shutdown the leader releases its lock; after an ungraceful failure, another
-instance can take over after TTL expiry.
+`DEDA_LEADER_LOCK_KEY`. A Redis outage fails closed and makes all instances
+unready; a replica that successfully confirms another owner is a healthy
+standby. On graceful shutdown the leader releases its lock; after an ungraceful
+failure, another instance can take over after TTL expiry.
 
 Redis should itself be deployed with the durability and network isolation
 appropriate to the cluster. The lease prevents normal concurrent updates but

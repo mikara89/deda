@@ -1,3 +1,4 @@
+using Deda.Core;
 using Deda.HA;
 
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,14 +34,14 @@ public sealed class RedisLeaderElectorTests
     }
 
     [Fact]
-    public async Task StoreFailureFailsClosedInsteadOfClaimingLeadership()
+    public async Task StoreFailureIsReportedAsUnavailableInsteadOfStandby()
     {
         var elector = Create(new ThrowingLeaseStore(), FirstOptions);
 
-        await elector.StartAsync(CancellationToken.None);
+        var error = await Assert.ThrowsAsync<LeaderElectionUnavailableException>(
+            () => elector.IsLeaderAsync(CancellationToken.None));
 
-        Assert.False(await elector.IsLeaderAsync(CancellationToken.None));
-        await elector.StopAsync(CancellationToken.None);
+        Assert.IsType<IOException>(error.InnerException);
     }
 
     [Theory]

@@ -15,7 +15,10 @@ When `DEDA_REDIS_CONNECTION` is configured, DEDA uses one Redis key containing
 a unique instance owner ID. One Lua operation atomically acquires an absent key
 or renews it only when the stored owner matches. The key has a short TTL and is
 refreshed by a background heartbeat. Store failures and ownership mismatches
-fail closed.
+fail closed. A confirmed ownership mismatch is normal standby and returns
+`false`; store or transport failures raise `LeaderElectionUnavailableException`
+so the reconciliation health state becomes unready instead of reporting a
+healthy standby.
 
 The controller confirms the lease before discovery and again immediately before
 each replica update. Graceful shutdown deletes the key only when the caller is
@@ -36,6 +39,8 @@ explicit warning and supports only the documented single-replica deployment.
   takeover and no long-lived leader state.
 - Redis becomes an optional operational dependency and should itself be made
   appropriately available and network-isolated.
+- A Redis outage makes `/health/ready` unhealthy and activates bounded
+  reconciliation backoff on every configured replica.
 - Docker's service-update API has no fencing-token field. Lease confirmation at
   the mutation boundary minimizes stale-leader writes but cannot form a fully
   linearizable fence across every possible network partition.

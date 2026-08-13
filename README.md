@@ -337,7 +337,9 @@ metrics and traces to an OTLP-compatible backend; standard variables such as
 
 Core metrics include reconcile count/failures/duration, trigger
 requests/failures/duration/value, scale decisions/events, and current/desired
-replicas. Dimensions are limited to service, trigger, direction, and result.
+replicas. Trigger value and replica snapshots are observable gauges; durations
+are histograms and totals are counters. Dimensions are limited to service,
+trigger, direction, and result.
 Trace spans cover reconciliation, Docker discovery, service evaluation, trigger
 calls, scale decisions, and replica updates.
 
@@ -346,8 +348,9 @@ calls, scale decisions, and replica updates.
 Set `DEDA_REDIS_CONNECTION` on two or more DEDA replicas to enable active/standby
 operation. The leader renews an owner-specific Redis TTL lease; standbys skip
 reconciliation and take over after release or TTL expiry. Lease failures are
-fail-closed, and ownership is confirmed again immediately before each Docker
-replica update. Without Redis, DEDA warns at startup and must run with
+fail-closed and make readiness unhealthy, while a confirmed standby remains
+ready. Ownership is confirmed again immediately before each Docker replica
+update. Without Redis, DEDA warns at startup and must run with
 `deploy.replicas: 1`. See [Deda.HA](src/Deda.HA/README.md) for operational
 details and the Docker fencing limitation.
 

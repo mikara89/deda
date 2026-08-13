@@ -20,8 +20,11 @@ validation.
 
 Add `scaleToZeroGraceSeconds`. When `min=0`, inactive work must remain inactive
 for the configured period before zero can be recommended; active work resets
-the timer. The existing scale-down stabilization and cooldown policies still
-apply, so their delays can be cumulative by design.
+the timer. Failed or invalid trigger observations also reset the timer because
+they are not evidence of continuous inactivity. An explicit `failsafe=min`
+decision may still choose zero immediately; it does not preserve inactivity
+evidence for a later valid observation. The existing scale-down stabilization
+and cooldown policies still apply, so their delays can be cumulative by design.
 
 Recommendation state uses an expiry queue plus a monotonic maximum deque. This
 keeps insertion and expiry amortized O(1) and reads the conservative maximum in

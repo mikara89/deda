@@ -31,6 +31,7 @@ public sealed class OpenTelemetryAutoscalerTelemetryTests
             "test",
             DateTimeOffset.UtcNow));
         telemetry.RecordReconcile(TimeSpan.FromMilliseconds(500), success: true);
+        listener.RecordObservableInstruments();
 
         Assert.Contains(measurements, measurement =>
             measurement.Name == "deda_trigger_requests_total" &&
@@ -43,6 +44,31 @@ public sealed class OpenTelemetryAutoscalerTelemetryTests
         Assert.Contains(measurements, measurement =>
             measurement.Name == "deda_reconcile_duration_seconds" &&
             Math.Abs(measurement.Value - 0.5) < 0.001);
+        Assert.Contains(measurements, measurement =>
+            measurement.Name == "deda_trigger_value" &&
+            Math.Abs(measurement.Value - 42) < 0.001 &&
+            Equals(measurement.Tags["service"], "orders") &&
+            Equals(measurement.Tags["trigger"], "rabbitmq"));
+        Assert.Contains(measurements, measurement =>
+            measurement.Name == "deda_current_replicas" &&
+            Math.Abs(measurement.Value - 1) < 0.001 &&
+            Equals(measurement.Tags["service"], "orders"));
+        Assert.Contains(measurements, measurement =>
+            measurement.Name == "deda_desired_replicas" &&
+            Math.Abs(measurement.Value - 5) < 0.001 &&
+            Equals(measurement.Tags["service"], "orders"));
+    }
+
+    [Fact]
+    public void SnapshotValuesAreObservableGaugesWhileTotalsAndDurationsKeepTheirSemantics()
+    {
+        Assert.IsAssignableFrom<ObservableGauge<double>>(OpenTelemetryAutoscalerTelemetry.TriggerValue);
+        Assert.IsAssignableFrom<ObservableGauge<int>>(OpenTelemetryAutoscalerTelemetry.CurrentReplicas);
+        Assert.IsAssignableFrom<ObservableGauge<int>>(OpenTelemetryAutoscalerTelemetry.DesiredReplicas);
+        Assert.IsAssignableFrom<Counter<long>>(OpenTelemetryAutoscalerTelemetry.ScaleEvents);
+        Assert.IsAssignableFrom<Counter<long>>(OpenTelemetryAutoscalerTelemetry.TriggerRequests);
+        Assert.IsAssignableFrom<Histogram<double>>(OpenTelemetryAutoscalerTelemetry.TriggerDuration);
+        Assert.IsAssignableFrom<Histogram<double>>(OpenTelemetryAutoscalerTelemetry.ReconcileDuration);
     }
 
     [Fact]

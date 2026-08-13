@@ -15,7 +15,8 @@ public class SimpleScalePolicyTests
         int min = 0, int max = 20,
         double targetPerReplica = 10, double activationThreshold = 2,
         int cooldownSeconds = 60, int scaleDownDelaySeconds = 30,
-        int stepUp = 10, int stepDown = 5, int scaleToZeroGraceSeconds = 0) =>
+        int stepUp = 10, int stepDown = 5, int scaleToZeroGraceSeconds = 0,
+        FailSafeMode failSafe = FailSafeMode.Hold) =>
         new()
         {
             Enabled = true,
@@ -26,6 +27,7 @@ public class SimpleScalePolicyTests
             CooldownSeconds = cooldownSeconds,
             ScaleDownDelaySeconds = scaleDownDelaySeconds,
             ScaleToZeroGraceSeconds = scaleToZeroGraceSeconds,
+            FailSafe = failSafe,
             StepUp = stepUp,
             StepDown = stepDown,
             TriggerType = "fake",
@@ -204,6 +206,54 @@ public class SimpleScalePolicyTests
 
         Assert.Equal(5, inactiveAgain.DesiredReplicas);
         Assert.Equal(Now.AddSeconds(31), state.InactiveSinceUtc);
+    }
+
+    [Fact]
+    public void TriggerFailureResetsScaleToZeroGrace()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(
+            cooldownSeconds: 0,
+            scaleDownDelaySeconds: 0,
+            stepDown: 0,
+            scaleToZeroGraceSeconds: 30);
+        var state = new ServiceScaleState();
+
+        policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now);
+        var failed = policy.Decide(Svc(5), cfg, TriggerResult.Fail("unavailable"), state, Now.AddSeconds(20));
+        var inactiveAgain = policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now.AddSeconds(31));
+        var stillHeld = policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now.AddSeconds(60));
+        var released = policy.Decide(Svc(5), cfg, TriggerResult.Ok(0), state, Now.AddSeconds(61));
+
+        Assert.Equal(5, failed.DesiredReplicas);
+        Assert.Equal(5, inactiveAgain.DesiredReplicas);
+        Assert.Equal(Now.AddSeconds(31), state.InactiveSinceUtc);
+        Assert.Equal(5, stillHeld.DesiredReplicas);
+        Assert.Equal(0, released.DesiredReplicas);
+    }
+
+    [Fact]
+    public void MinFailsafeCanScaleToZeroButClearsInactivityEvidence()
+    {
+        var policy = new SimpleScalePolicyMvp();
+        var cfg = Cfg(
+            min: 0,
+            cooldownSeconds: 0,
+            scaleDownDelaySeconds: 0,
+            stepDown: 0,
+            scaleToZeroGraceSeconds: 30,
+            failSafe: FailSafeMode.Min);
+        var state = new ServiceScaleState { InactiveSinceUtc = Now };
+
+        var failed = policy.Decide(
+            Svc(5),
+            cfg,
+            TriggerResult.Fail("unavailable"),
+            state,
+            Now.AddSeconds(20));
+
+        Assert.Equal(0, failed.DesiredReplicas);
+        Assert.Null(state.InactiveSinceUtc);
     }
 
     [Fact]

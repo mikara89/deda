@@ -195,6 +195,14 @@
         Task<bool> IsLeaderAsync(CancellationToken ct);
     }
 
+    public sealed class LeaderElectionUnavailableException : Exception
+    {
+        public LeaderElectionUnavailableException(string message, Exception innerException)
+            : base(message, innerException)
+        {
+        }
+    }
+
     public interface IServiceUpdateStrategy
     {
         Task ApplyDesiredReplicasAsync(ISwarmServiceClient swarm, ServiceRef service, int desiredReplicas, CancellationToken ct);

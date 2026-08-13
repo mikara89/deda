@@ -1,5 +1,6 @@
 using Deda.Core;
 using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
@@ -16,15 +17,24 @@ namespace Deda.Observability
     {
         private static readonly Counter<long> Reconciles = DedaDiagnostics.Meter.CreateCounter<long>("deda_reconcile_total");
         private static readonly Counter<long> ReconcileFailures = DedaDiagnostics.Meter.CreateCounter<long>("deda_reconcile_failures_total");
-        private static readonly Histogram<double> ReconcileDuration = DedaDiagnostics.Meter.CreateHistogram<double>("deda_reconcile_duration_seconds", "s");
-        private static readonly Counter<long> TriggerRequests = DedaDiagnostics.Meter.CreateCounter<long>("deda_trigger_requests_total");
+        internal static readonly Histogram<double> ReconcileDuration = DedaDiagnostics.Meter.CreateHistogram<double>("deda_reconcile_duration_seconds", "s");
+        internal static readonly Counter<long> TriggerRequests = DedaDiagnostics.Meter.CreateCounter<long>("deda_trigger_requests_total");
         private static readonly Counter<long> TriggerFailures = DedaDiagnostics.Meter.CreateCounter<long>("deda_trigger_failures_total");
-        private static readonly Histogram<double> TriggerDuration = DedaDiagnostics.Meter.CreateHistogram<double>("deda_trigger_duration_seconds", "s");
-        private static readonly Histogram<double> TriggerValue = DedaDiagnostics.Meter.CreateHistogram<double>("deda_trigger_value");
+        internal static readonly Histogram<double> TriggerDuration = DedaDiagnostics.Meter.CreateHistogram<double>("deda_trigger_duration_seconds", "s");
         private static readonly Counter<long> ScaleDecisions = DedaDiagnostics.Meter.CreateCounter<long>("deda_scale_decisions_total");
-        private static readonly Counter<long> ScaleEvents = DedaDiagnostics.Meter.CreateCounter<long>("deda_scale_events_total");
-        private static readonly Histogram<int> CurrentReplicas = DedaDiagnostics.Meter.CreateHistogram<int>("deda_current_replicas");
-        private static readonly Histogram<int> DesiredReplicas = DedaDiagnostics.Meter.CreateHistogram<int>("deda_desired_replicas");
+        internal static readonly Counter<long> ScaleEvents = DedaDiagnostics.Meter.CreateCounter<long>("deda_scale_events_total");
+        private static readonly ConcurrentDictionary<TriggerMetricKey, double> TriggerValues = new();
+        private static readonly ConcurrentDictionary<string, int> CurrentReplicaValues = new(StringComparer.Ordinal);
+        private static readonly ConcurrentDictionary<string, int> DesiredReplicaValues = new(StringComparer.Ordinal);
+        internal static readonly ObservableGauge<double> TriggerValue = DedaDiagnostics.Meter.CreateObservableGauge(
+            "deda_trigger_value",
+            ObserveTriggerValues);
+        internal static readonly ObservableGauge<int> CurrentReplicas = DedaDiagnostics.Meter.CreateObservableGauge(
+            "deda_current_replicas",
+            ObserveCurrentReplicas);
+        internal static readonly ObservableGauge<int> DesiredReplicas = DedaDiagnostics.Meter.CreateObservableGauge(
+            "deda_desired_replicas",
+            ObserveDesiredReplicas);
 
         private readonly ILogger<OpenTelemetryAutoscalerTelemetry> _logger;
 
@@ -61,9 +71,12 @@ namespace Deda.Observability
             TriggerRequests.Add(1, tags);
             TriggerDuration.Record(duration.TotalSeconds, tags);
             if (result.Success)
-                TriggerValue.Record(result.Work, tags);
+                TriggerValues[new TriggerMetricKey(serviceName, triggerType)] = result.Work;
             else
+            {
+                TriggerValues.TryRemove(new TriggerMetricKey(serviceName, triggerType), out _);
                 TriggerFailures.Add(1, tags);
+            }
         }
 
         public void RecordDecision(ScaleDecision decision)
@@ -82,8 +95,8 @@ namespace Deda.Observability
             ScaleDecisions.Add(1, tags);
             if (direction != "hold")
                 ScaleEvents.Add(1, tags);
-            CurrentReplicas.Record(decision.CurrentReplicas, tags);
-            DesiredReplicas.Record(decision.DesiredReplicas, tags);
+            CurrentReplicaValues[decision.ServiceName] = decision.CurrentReplicas;
+            DesiredReplicaValues[decision.ServiceName] = decision.DesiredReplicas;
 
             _logger.LogInformation(
                 "Scale decision for {ServiceName}: work={Work} replicas={CurrentReplicas}->{DesiredReplicas} direction={Direction} reason={Reason}",
@@ -101,5 +114,33 @@ namespace Deda.Observability
             Activity.Current?.AddException(ex);
             _logger.LogError(ex, "Autoscaler error for {ServiceName} during {Stage}", serviceName, stage);
         }
+
+        private static IEnumerable<Measurement<double>> ObserveTriggerValues()
+        {
+            foreach (var entry in TriggerValues)
+            {
+                yield return new Measurement<double>(entry.Value,
+                    new KeyValuePair<string, object?>("service", entry.Key.ServiceName),
+                    new KeyValuePair<string, object?>("trigger", entry.Key.TriggerType));
+            }
+        }
+
+        private static IEnumerable<Measurement<int>> ObserveCurrentReplicas() =>
+            ObserveReplicaValues(CurrentReplicaValues);
+
+        private static IEnumerable<Measurement<int>> ObserveDesiredReplicas() =>
+            ObserveReplicaValues(DesiredReplicaValues);
+
+        private static IEnumerable<Measurement<int>> ObserveReplicaValues(
+            ConcurrentDictionary<string, int> values)
+        {
+            foreach (var entry in values)
+            {
+                yield return new Measurement<int>(entry.Value,
+                    new KeyValuePair<string, object?>("service", entry.Key));
+            }
+        }
+
+        private readonly record struct TriggerMetricKey(string ServiceName, string TriggerType);
     }
 }

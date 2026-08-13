@@ -166,8 +166,9 @@ public sealed class RedisLeaderElector : BackgroundService, ILeaderElector
         catch (Exception ex)
         {
             SetLeadership(false);
-            _logger.LogError(ex, "Redis leader lease refresh failed; this instance is standing by.");
-            return false;
+            throw new LeaderElectionUnavailableException(
+                "Redis leader lease refresh failed; leadership is unavailable.",
+                ex);
         }
     }
 

@@ -151,6 +151,12 @@ namespace Deda.Controller
                 {
                     throw;
                 }
+                catch (LeaderElectionUnavailableException)
+                {
+                    // Infrastructure failure must reach the reconciliation runner so
+                    // readiness becomes unhealthy. False leadership is normal standby.
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _telemetry.RecordError(svc.Name, "reconcile", ex);

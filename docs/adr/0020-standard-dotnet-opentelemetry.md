@@ -24,6 +24,11 @@ Metric dimensions are restricted to bounded operational fields: service,
 trigger type, direction, and result. Error text and scale-reason strings remain
 logs or trace status rather than metric labels.
 
+Snapshot measurements use observable, state-backed gauges: trigger value is the
+latest successful value per service and trigger, while current and desired
+replicas are the latest decision values per service. Durations remain
+histograms and cumulative events remain counters.
+
 ## Alternatives Considered
 
 - **Repair the custom registry** — could produce valid Prometheus output but

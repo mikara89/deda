@@ -10,6 +10,10 @@ namespace Deda.Policies
 
             if (!trigger.Success || !TriggerResult.IsValidWork(trigger.Work))
             {
+                // A failed or invalid observation says nothing about workload inactivity.
+                // Restart the continuous-inactivity window after the next valid zero.
+                state.InactiveSinceUtc = null;
+
                 int desiredFail = cfg.FailSafe switch
                 {
                     FailSafeMode.Min => cfg.MinReplicas,
