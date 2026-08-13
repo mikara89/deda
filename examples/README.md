@@ -1,109 +1,53 @@
-# Examples
+# DEDA examples
 
-Ready-to-deploy Docker Swarm stack files for common DEDA setups. Each example is
-self-contained and fully commented.
+These Docker Swarm examples progress from installation to individual features
+and an end-to-end topology. Each directory contains prerequisites, deployment,
+expected behavior, verification, cleanup, and links to canonical documentation.
 
----
+| Example | Demonstrates | Published ports |
+| --- | --- | --- |
+| [Minimal](minimal/README.md) | DEDA plus private Docker socket proxy | DEDA 8080 |
+| [RabbitMQ trigger](rabbitmq-trigger/README.md) | Queue-depth scaling with global credential files | DEDA 8080, RabbitMQ 15672 |
+| [Prometheus trigger](prometheus-trigger/README.md) | Strict single-value PromQL scaling from Traefik request rate | DEDA 8080, Prometheus 9090, HTTP 80 |
+| [HTTP trigger](http-trigger/README.md) | Nested JSON `valuePath` extraction | DEDA 8081 |
+| [Scale to zero](scale-to-zero/README.md) | Continuous-inactivity grace before zero | DEDA 8082 |
+| [Redis HA](ha-redis/README.md) | Two DEDA replicas with leader/standby behavior | DEDA 8083 |
+| [Observability](observability/README.md) | Prometheus scraping DEDA health/reconcile metrics | DEDA 8084, Prometheus 9091 |
+| [Order processing](order-processing/README.md) | Queue worker, per-service credentials, stabilization, and metrics | DEDA 8085, Prometheus 9092, RabbitMQ 15675 |
 
-## Overview
+## Common prerequisites
 
-| Example                                               | Trigger                  | When to use                                       |
-| ----------------------------------------------------- | ------------------------ | ------------------------------------------------- |
-| [`minimal/`](minimal/stack.yml)                       | none                     | Starting point — add your own services and labels |
-| [`rabbitmq-trigger/`](rabbitmq-trigger/stack.yml)     | RabbitMQ queue depth     | Worker queues, task processors, event consumers   |
-| [`prometheus-trigger/`](prometheus-trigger/stack.yml) | Prometheus instant query | HTTP traffic (via Traefik), any custom metric     |
-
-All examples follow the same base pattern from the DEDA CLI tool template:
-
-- **Overlay network** (`deda_net`) — services communicate by name, no direct
-  port exposure needed
-- **Docker socket proxy** — DEDA talks to a `tecnativa/docker-socket-proxy`
-  sidecar instead of mounting the raw Docker socket; no root access required
-- **Resource limits** — DEDA is capped at `0.25 cpu / 256M` by default
-- **Restart policy** — `on-failure` with a 5-second delay on all critical
-  services
-
----
-
-## Prerequisites
-
-All examples require Docker Swarm mode:
+- Linux Docker Engine with Swarm mode active
+- A Docker context with manager access
+- Network and published ports available for the chosen example
 
 ```bash
 docker swarm init
 ```
 
-The `rabbitmq-trigger` example additionally requires two Swarm secrets before
-deploying:
+Examples default to the compatible pre-release
+`ghcr.io/mikara89/deda:v0.1.0-preview.1`. Override `DEDA_IMAGE` with another
+released tag or immutable digest when evaluating a different version:
 
 ```bash
-# Replace the values with your actual RabbitMQ credentials
-printf 'admin'    | docker secret create rabbitmq_user -
-printf 'changeme' | docker secret create rabbitmq_pass -
+DEDA_IMAGE=ghcr.io/mikara89/deda@sha256:DIGEST \
+  docker stack deploy -c examples/minimal/stack.yml deda
 ```
 
----
+Every DEDA topology uses the pinned socket-proxy image and a private overlay
+network. The proxy narrows Docker API endpoint families, but service scaling
+requires POST access; do not publish the proxy port.
 
-## Deploy
+## Suggested learning path
 
-### Minimal
+1. Deploy [minimal](minimal/README.md) and verify health.
+2. Choose one trigger: [RabbitMQ](rabbitmq-trigger/README.md),
+   [Prometheus](prometheus-trigger/README.md), or [HTTP](http-trigger/README.md).
+3. Try [scale to zero](scale-to-zero/README.md).
+4. Add [observability](observability/README.md).
+5. Evaluate [Redis HA](ha-redis/README.md) only if multiple DEDA replicas are
+   required.
+6. Use [order processing](order-processing/README.md) as an integration
+   blueprint.
 
-```bash
-docker stack deploy -c examples/minimal/stack.yml deda
-```
-
-### RabbitMQ trigger
-
-```bash
-docker stack deploy -c examples/rabbitmq-trigger/stack.yml deda
-```
-
-### Prometheus trigger
-
-The Prometheus config file uses a relative path mount, so deploy from the
-example directory:
-
-```bash
-cd examples/prometheus-trigger
-docker stack deploy -c stack.yml deda
-```
-
----
-
-## Verify
-
-After deploying, check service health:
-
-```bash
-docker stack services deda
-curl http://localhost:8080/health/ready
-curl http://localhost:8080/metrics
-```
-
-Remove a stack when done:
-
-```bash
-docker stack rm deda
-```
-
----
-
-## Adapting to your workload
-
-1. Copy the relevant example directory
-2. Replace `ghcr.io/mikara89/deda:latest` with a pinned image tag
-3. Replace `nginxdemos/hello:plain-text` / `alpine:3.20` with your real service
-   image
-4. Adjust the `com.deda.autoscale.*` labels on your service — see the full
-   [Label Reference](../README.md#label-reference) in the root README
-
----
-
-## See also
-
-- [Label Reference](../README.md#label-reference)
-- [Trigger Configuration](../README.md#trigger-configuration)
-- [deploy/swarm/deda-stack.yml](../deploy/swarm/deda-stack.yml) — all-in-one
-  development sandbox (RabbitMQ + Prometheus + Traefik)
-- [docs/adr/](../docs/adr/README.md) — architecture decisions explaining the
-  socket proxy, credentials, and scaling logic
+The complete user documentation starts at [docs/README.md](../docs/README.md).

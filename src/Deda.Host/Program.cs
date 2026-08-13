@@ -19,6 +19,8 @@ using StackExchange.Redis;
 var builder = WebApplication.CreateSlimBuilder(args);
 var opts = DedaHostOptions.FromEnvironment();
 builder.Services.AddSingleton(opts);
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, HealthJsonContext.Default));
 builder.WebHost.UseUrls($"http://0.0.0.0:{opts.HttpPort}");
 
 var otlpEnabled = !string.IsNullOrWhiteSpace(
@@ -109,17 +111,15 @@ if (opts.RedisConnectionString is null)
         "High availability is disabled. Run exactly one DEDA replica or configure DEDA_REDIS_CONNECTION.");
 }
 app.MapPrometheusScrapingEndpoint("/metrics");
-app.MapGet("/health/live", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health/live", () => Results.Ok(new LiveHealthResponse("ok")));
 app.MapGet("/health/ready", (IReconciliationHealth healthState) =>
 {
     var health = healthState.Snapshot();
     return health.IsReady
-        ? Results.Ok(new
-        {
-            status = "ready",
-            lastAttemptUtc = health.LastAttemptUtc,
-            lastSuccessfulUtc = health.LastSuccessfulUtc,
-        })
+        ? Results.Ok(new ReadyHealthResponse(
+            "ready",
+            health.LastAttemptUtc,
+            health.LastSuccessfulUtc))
         : Results.Problem(
             title: "Reconciliation is not healthy",
             detail: health.LastError ?? "No successful reconciliation has completed.",

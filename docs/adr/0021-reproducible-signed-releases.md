@@ -14,10 +14,11 @@ Version tags build native `linux/amd64` and `linux/arm64` candidates addressed
 only by immutable digest. Each candidate digest must pass the vulnerability
 gate before the workflow assembles an unadvertised multi-architecture manifest.
 The verified manifest digest is signed with Cosign's GitHub OIDC identity before
-any public `latest` or semantic-version tag is created. The release workflow
-publishes NativeAOT CLI archives for Linux x64, Linux arm64, and Windows x64
-together with SHA-256 checksums, an SPDX SBOM, and a GitHub artifact provenance
-attestation.
+any public `latest` or semantic-version tag is created. Version releases expose
+both the normalized semantic version and the source `v`-prefixed tag. The
+release workflow publishes NativeAOT CLI archives for Linux x64, Linux arm64,
+and Windows x64 together with SHA-256 checksums, an SPDX SBOM, and a GitHub
+artifact provenance attestation.
 
 All third-party GitHub Actions and the example Docker socket proxy are pinned to
 immutable digests. Dependabot proposes routine updates for NuGet, Actions, and

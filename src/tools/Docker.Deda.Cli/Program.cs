@@ -60,7 +60,7 @@ Usage:
   docker deda uninstall [--stack <name>]
 
 Examples:
-  docker deda install --image ghcr.io/acme/deda:0.3.0-aot --stack deda --port 8080
+  docker deda install --image ghcr.io/mikara89/deda:VERSION --stack deda --port 8080
   docker deda status
 ");
         return string.IsNullOrWhiteSpace(err) ? 0 : 1;

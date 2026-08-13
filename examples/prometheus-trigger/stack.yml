@@ -16,9 +16,9 @@ version: "3.8"
 # Prerequisites:
 #   • Docker Swarm mode active (docker swarm init)
 #
-# Deploy (from this directory so ./prometheus.yml resolves):
+# Deploy:
 #   cd examples/prometheus-trigger
-#   docker stack deploy -c stack.yml deda
+#   docker stack deploy -c stack.yml deda-prometheus
 #
 # Test: send traffic to demo-http to trigger scale-up
 #   curl -H "Host: demo.local" http://<manager-ip>/
@@ -33,6 +33,10 @@ networks:
   deda_net:
     driver: overlay
     attachable: false
+
+configs:
+  prometheus_config:
+    file: ./prometheus.yml
 
 services:
 
@@ -62,12 +66,11 @@ services:
   # ── deda ────────────────────────────────────────────────────────────────────
   # No secrets needed — Prometheus trigger requires no credentials by default
   deda:
-    image: ghcr.io/mikara89/deda:latest
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.1.0-preview.1}
     networks: [deda_net]
     environment:
       DEDA_POLL_SECONDS: "10"
       DEDA_HTTP_PORT: "8080"
-      DEDA_LOG_DECISIONS: "true"
       DEDA_MAX_SERVICES_PER_CYCLE: "25"
       DEDA_JITTER_ENABLED: "true"
       DOCKER_HOST: "http://docker-proxy:2375"
@@ -94,8 +97,8 @@ services:
           memory: 64M
 
   # ── prometheus ───────────────────────────────────────────────────────────────
-  # Scrapes Traefik request-rate metrics. Config file is mounted from the same
-  # directory — run `docker stack deploy` from examples/prometheus-trigger/.
+  # Scrapes Traefik request-rate metrics. Swarm distributes the config to the
+  # node that runs this task.
   prometheus:
     image: prom/prometheus:v2.54.1
     networks: [deda_net]
@@ -103,8 +106,9 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=1d" # minimal retention for dev
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
     deploy:
@@ -131,7 +135,7 @@ services:
       - --providers.swarm=true
       - --providers.swarm.endpoint=unix:///var/run/docker.sock
       - --providers.swarm.exposedbydefault=false
-      - --providers.swarm.network=deda_net # overlay network to use for routing
+      - --providers.swarm.network=deda-prometheus_deda_net # stack-scoped overlay network
 
       # Entrypoints
       - --entrypoints.web.address=:80
@@ -176,6 +180,7 @@ services:
         traefik.http.routers.demo.rule: "Host(`demo.local`)"
         traefik.http.routers.demo.entrypoints: "web"
         traefik.http.services.demo.loadbalancer.server.port: "80"
+        traefik.swarm.network: "deda-prometheus_deda_net"
 
         # ── DEDA autoscale ───────────────────────────────────────────────────
         com.deda.autoscale.enabled: "true"
@@ -205,7 +210,7 @@ services:
 
         # Instant query: total inbound HTTP requests per second across all
         # Traefik services over the last 1 minute. Adjust to scope to a single
-        # service: rate(traefik_service_requests_total{service="demo-http@docker"}[1m])
+        # service. Inspect Traefik's exact Swarm service label before scoping.
         com.deda.autoscale.trigger.query: "sum(rate(traefik_service_requests_total[1m]))"
 
         # ── failsafe ─────────────────────────────────────────────────────────

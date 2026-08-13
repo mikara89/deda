@@ -52,7 +52,6 @@ services:
     environment:
       DEDA_POLL_SECONDS: ""${DEDA_POLL_SECONDS}""
       DEDA_HTTP_PORT: ""8080""
-      DEDA_LOG_DECISIONS: ""true""
       DEDA_MAX_SERVICES_PER_CYCLE: ""${DEDA_MAX_SVC_PER_CYCLE}""
       DEDA_JITTER_ENABLED: ""${DEDA_JITTER}""
       DOCKER_HOST: ""http://docker-proxy:2375""

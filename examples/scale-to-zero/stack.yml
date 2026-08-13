@@ -1,0 +1,71 @@
+version: "3.8"
+
+networks:
+  deda_net:
+    driver: overlay
+
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    networks: [deda_net]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SERVICES: "1"
+      TASKS: "1"
+      NODES: "1"
+      SWARM: "1"
+      VERSION: "1"
+      POST: "1"
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  deda:
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.1.0-preview.1}
+    networks: [deda_net]
+    environment:
+      DOCKER_HOST: "http://docker-proxy:2375"
+      DEDA_POLL_SECONDS: "5"
+    ports:
+      - target: 8080
+        published: 8082
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  zero-metric:
+    image: nginx:1.27-alpine
+    networks: [deda_net]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        printf '0\n' > /usr/share/nginx/html/value
+        exec nginx -g 'daemon off;'
+    deploy:
+      replicas: 1
+
+  worker:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    networks: [deda_net]
+    deploy:
+      replicas: 1
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.min: "0"
+        com.deda.autoscale.max: "5"
+        com.deda.autoscale.targetPerReplica: "10"
+        com.deda.autoscale.activationThreshold: "1"
+        com.deda.autoscale.scaleToZeroGraceSeconds: "30"
+        com.deda.autoscale.cooldownSeconds: "0"
+        com.deda.autoscale.scaleDownDelaySeconds: "0"
+        com.deda.autoscale.stepDown: "0"
+        com.deda.autoscale.trigger.type: "http"
+        com.deda.autoscale.trigger.url: "http://zero-metric/value"
+        com.deda.autoscale.failsafe: "hold"

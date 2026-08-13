@@ -6,6 +6,12 @@ All notable changes to DEDA are documented here. Releases follow
 
 ## [Unreleased]
 
+### Changed
+
+- Reorganized user documentation into a five-minute start, task-oriented
+  guides, full configuration reference, production guidance, troubleshooting,
+  and independently documented Swarm examples.
+
 ### Added
 
 - Resilient reconciliation with health-based readiness and bounded backoff.

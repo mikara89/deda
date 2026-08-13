@@ -14,7 +14,7 @@ version: "3.8"
 #     (replace 'admin' / 'changeme' with your actual credentials)
 #
 # Deploy:
-#   docker stack deploy -c examples/rabbitmq-trigger/stack.yml deda
+#   docker stack deploy -c examples/rabbitmq-trigger/stack.yml deda-rabbit
 #
 # Verify:
 #   docker stack services deda
@@ -41,8 +41,8 @@ volumes:
 services:
 
   # ── docker-proxy ────────────────────────────────────────────────────────────
-  # Exposes a minimal, read-only subset of the Docker API over TCP.
-  # DEDA uses this instead of a raw socket mount — no root access required.
+  # Exposes selected Docker API endpoint families over TCP. POST is required
+  # for service updates; keep deda_net private.
   docker-proxy:
     image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
     networks: [deda_net]
@@ -67,7 +67,7 @@ services:
 
   # ── deda ────────────────────────────────────────────────────────────────────
   deda:
-    image: ghcr.io/mikara89/deda:latest
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.1.0-preview.1}
     networks: [deda_net]
     secrets:
       - rabbitmq_user # mounted at /run/secrets/rabbitmq_user
@@ -75,7 +75,6 @@ services:
     environment:
       DEDA_POLL_SECONDS: "10"
       DEDA_HTTP_PORT: "8080"
-      DEDA_LOG_DECISIONS: "true"
       DEDA_MAX_SERVICES_PER_CYCLE: "25"
       DEDA_JITTER_ENABLED: "true"
       DOCKER_HOST: "http://docker-proxy:2375"

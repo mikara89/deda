@@ -1,0 +1,112 @@
+version: "3.8"
+
+networks:
+  orders:
+    driver: overlay
+
+secrets:
+  orders-rabbitmq:
+    external: true
+
+volumes:
+  rabbitmq_data:
+
+configs:
+  prometheus_config:
+    file: ./prometheus.yml
+
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    networks: [orders]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SERVICES: "1"
+      TASKS: "1"
+      NODES: "1"
+      SWARM: "1"
+      VERSION: "1"
+      POST: "1"
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  deda:
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.1.0-preview.1}
+    networks: [orders]
+    secrets: [orders-rabbitmq]
+    environment:
+      DOCKER_HOST: "http://docker-proxy:2375"
+      DEDA_POLL_SECONDS: "5"
+      DEDA_HTTP_PORT: "8080"
+    ports:
+      - target: 8080
+        published: 8085
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    networks: [orders]
+    environment:
+      # Disposable demo credentials. The mounted DEDA secret must match.
+      RABBITMQ_DEFAULT_USER: demo-orders
+      RABBITMQ_DEFAULT_PASS: demo-password-change-me
+    ports:
+      - target: 15672
+        published: 15675
+        protocol: tcp
+        mode: ingress
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    deploy:
+      replicas: 1
+
+  order-worker:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    networks: [orders]
+    deploy:
+      replicas: 1
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.min: "1"
+        com.deda.autoscale.max: "20"
+        com.deda.autoscale.targetPerReplica: "25"
+        com.deda.autoscale.activationThreshold: "1"
+        com.deda.autoscale.cooldownSeconds: "30"
+        com.deda.autoscale.scaleDownDelaySeconds: "60"
+        com.deda.autoscale.stepUp: "5"
+        com.deda.autoscale.stepDown: "2"
+        com.deda.autoscale.trigger.type: "rabbitmq"
+        com.deda.autoscale.trigger.url: "http://rabbitmq:15672"
+        com.deda.autoscale.trigger.vhost: "/"
+        com.deda.autoscale.trigger.queue: "orders"
+        com.deda.autoscale.trigger.metric: "messages_ready"
+        com.deda.autoscale.trigger.credentialsSecret: "orders-rabbitmq"
+        com.deda.autoscale.failsafe: "hold"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    networks: [orders]
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+    ports:
+      - target: 9090
+        published: 9092
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1

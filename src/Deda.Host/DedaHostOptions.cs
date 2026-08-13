@@ -8,7 +8,7 @@
         /// <summary>Named HttpClient timeout defaults (seconds) if triggers don't override.</summary>
         public int DefaultHttpTimeoutSeconds { get; init; } = 5;
 
-        /// <summary>Log decisions to console (MVP "logs").</summary>
+        /// <summary>Reserved compatibility setting; structured decision logging is currently always enabled.</summary>
         public bool LogDecisions { get; init; } = true;
 
         public int MaxServicesPerCycle { get; init; } = 0; // 0 = no cap

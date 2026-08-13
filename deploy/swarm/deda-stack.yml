@@ -1,5 +1,9 @@
 version: "3.8"
 
+# Legacy all-in-one development sandbox. The actively maintained, deployable
+# examples live under examples/. In particular, start with
+# examples/minimal/stack.yml and add a trigger-specific example.
+
 services:
   # deda:
   #   image: dedahost:latest   # build/push your host image
@@ -56,8 +60,6 @@ services:
   worker-rmq:
     image: alpine:3.20
     command: sleep 999999
-    depends_on:
-      - rabbitmq
     deploy:
       replicas: 0
       labels:
@@ -154,7 +156,7 @@ services:
         com.deda.autoscale.stepUp: "5"
         com.deda.autoscale.stepDown: "2"
         com.deda.autoscale.trigger.type: "prometheus"
-        com.deda.autoscale.trigger.url: "http://host.docker.internal:9090"
+        com.deda.autoscale.trigger.url: "http://prometheus:9090"
         com.deda.autoscale.trigger.query: 'sum(rate(traefik_service_requests_total[1m]))'
 secrets:
   rabbitmq_user:
