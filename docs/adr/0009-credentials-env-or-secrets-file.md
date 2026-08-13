@@ -32,8 +32,8 @@ named Docker secret containing `username:password`. The secret name is resolved
 under `DEDA_SECRETS_DIRECTORY` (default `/run/secrets`) and overrides global
 credentials for that service's trigger call only. Path separators and traversal
 are rejected. See
-[README.md per-service credentials](../../README.md#per-service-rabbitmq-credentials)
-for the intended design.
+[RabbitMQ credential guide](../triggers/rabbitmq.md#per-service-credentials)
+for deployment syntax and security guidance.
 
 ## Alternatives Considered
 

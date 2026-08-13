@@ -22,13 +22,14 @@ networks:
     driver: overlay
     # attachable: false — services outside this stack cannot join the network
     attachable: false
+  deda_metrics:
+    external: true
 
 services:
 
   # ── docker-proxy ────────────────────────────────────────────────────────────
-  # Tecnativa Docker Socket Proxy exposes a read-only subset of the Docker API
-  # over TCP. DEDA connects to this instead of the raw socket, which means the
-  # DEDA container never needs root access or a direct socket mount.
+  # Tecnativa Docker Socket Proxy exposes selected Docker API endpoint families
+  # over TCP. DEDA needs POST for service updates, so keep this network private.
   # See: docs/adr/0004-docker-socket-proxy.md
   docker-proxy:
     image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
@@ -56,7 +57,7 @@ services:
   # ── deda ────────────────────────────────────────────────────────────────────
   deda:
     image: ghcr.io/mikara89/deda:latest # replace with a pinned tag in production
-    networks: [deda_net]
+    networks: [deda_net, deda_metrics]
     environment:
       # How often (in seconds) to poll each service's trigger and reconcile
       DEDA_POLL_SECONDS: "10"
@@ -64,15 +65,11 @@ services:
       # Internal HTTP port — used for /metrics, /health/live, /health/ready
       DEDA_HTTP_PORT: "8080"
 
-      # Log every scale decision at INFO level (set "false" to reduce noise)
-      DEDA_LOG_DECISIONS: "true"
-
       # Maximum services evaluated per reconcile cycle (round-robin paging).
       # Prevents long cycles on large fleets.
       DEDA_MAX_SERVICES_PER_CYCLE: "25"
 
-      # Add small random delay before each scale-up to avoid thundering-herd
-      # when multiple services fire simultaneously
+      # Use stable-hash service ordering when paging a large fleet
       DEDA_JITTER_ENABLED: "true"
 
       # Route Docker API calls through the socket proxy (no raw socket needed)

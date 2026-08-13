@@ -1,0 +1,60 @@
+version: "3.8"
+
+networks:
+  deda_control:
+    driver: overlay
+
+volumes:
+  redis_data:
+
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    networks: [deda_control]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SERVICES: "1"
+      TASKS: "1"
+      NODES: "1"
+      SWARM: "1"
+      VERSION: "1"
+      POST: "1"
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  redis:
+    image: redis:7-alpine
+    networks: [deda_control]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  deda:
+    image: ghcr.io/mikara89/deda:latest
+    networks: [deda_control]
+    environment:
+      DOCKER_HOST: "http://docker-proxy:2375"
+      DEDA_POLL_SECONDS: "5"
+      DEDA_REDIS_CONNECTION: "redis:6379,abortConnect=false"
+      DEDA_LEADER_LOCK_KEY: "deda-ha-example:leader"
+      DEDA_LEADER_LEASE_SECONDS: "30"
+      DEDA_LEADER_RENEW_SECONDS: "10"
+    ports:
+      - target: 8080
+        published: 8083
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 2
+      placement:
+        constraints: [node.role == manager]
+      update_config:
+        parallelism: 1
+        order: start-first

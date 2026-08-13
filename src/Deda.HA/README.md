@@ -20,3 +20,7 @@ Redis should itself be deployed with the durability and network isolation
 appropriate to the cluster. The lease prevents normal concurrent updates but
 Docker Swarm has no fencing-token field, so it cannot provide a mathematically
 linearizable fence across an arbitrary network partition.
+
+See the user-facing [high-availability guide](../../docs/high-availability.md)
+for environment variables, a complete stack example, health behavior, and
+operational limitations.

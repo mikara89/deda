@@ -3,15 +3,16 @@
 `docker deda` is a Docker CLI plugin that installs, manages, and validates the
 DEDA autoscaler on a Docker Swarm cluster. Instead of writing and maintaining a
 Compose/stack file by hand, a single command deploys the complete DEDA stack
-with production-ready defaults.
+with production-oriented defaults that you should review for your cluster.
 
 ---
 
 ## How it works
 
-The plugin is a NativeAOT binary named `docker-deda` (or `docker-deda.exe` on
-Windows) placed in the Docker CLI plugins directory. Docker then exposes it as
-the `docker deda` sub-command.
+Docker discovers a plugin binary named `docker-deda` (or `docker-deda.exe` on
+Windows) in its CLI plugins directory. Release archives contain the published
+`Docker.Deda.Cli` executable; rename it while installing. Docker then exposes it
+as the `docker deda` sub-command.
 
 On `install`, it:
 
@@ -43,19 +44,22 @@ The stack it deploys includes:
 
 ### Install the plugin binary
 
-Download the pre-built binary for your platform and place it in the Docker CLI
-plugins directory:
+Download a release archive for `linux-x64`, `linux-arm64`, or `win-x64`, extract
+it, and place the binary in the Docker CLI plugins directory:
+
+Pre-built archives are attached to versioned GitHub releases. If the repository
+does not yet have a versioned release, use the source-build instructions below.
 
 ```bash
-# Linux / macOS
+# Linux
 mkdir -p ~/.docker/cli-plugins
-cp docker-deda ~/.docker/cli-plugins/docker-deda
+cp Docker.Deda.Cli ~/.docker/cli-plugins/docker-deda
 chmod +x ~/.docker/cli-plugins/docker-deda
 
 # Windows (PowerShell)
 $dir = "$env:USERPROFILE\.docker\cli-plugins"
 New-Item -ItemType Directory -Force $dir
-Copy-Item docker-deda.exe "$dir\docker-deda.exe"
+Copy-Item Docker.Deda.Cli.exe "$dir\docker-deda.exe"
 ```
 
 Verify the plugin is recognized:
@@ -91,11 +95,11 @@ echo -n "your-rabbitmq-password" | docker secret create rabbitmq_pass -
 If you use different secret names, pass `--rabbitmq-user-secret-name` and
 `--rabbitmq-pass-secret-name` to `install`.
 
-> **Known limitation — single credential set:** DEDA uses one RabbitMQ username
-> and password for all services it scales. All RabbitMQ queues referenced by
-> `com.deda.autoscale.trigger.type=rabbitmq` labels across your Swarm services
-> must be accessible with the same credentials. Multiple RabbitMQ instances or
-> per-service credentials are not yet supported.
+The generated stack mounts this global credential pair. DEDA also supports
+per-service `trigger.credentialsSecret` values containing `username:password`,
+but the current CLI does not add arbitrary per-service secrets to its generated
+stack. Extend the rendered deployment or use a repository example when you need
+multiple credential sets. See the [RabbitMQ guide](../../../docs/triggers/rabbitmq.md).
 
 ---
 
@@ -124,7 +128,7 @@ docker deda install [options]
 
 ```bash
 docker deda install \
-  --image ghcr.io/mikara89/deda:0.3.0 \
+  --image ghcr.io/mikara89/deda:VERSION \
   --stack deda \
   --port 8080 \
   --poll 15
@@ -138,7 +142,7 @@ Redeploys the stack with a new image. Accepts the same flags as `install`;
 unspecified flags keep their defaults.
 
 ```bash
-docker deda upgrade --image ghcr.io/mikara89/deda:0.4.0 [--stack deda]
+docker deda upgrade --image ghcr.io/mikara89/deda:VERSION [--stack deda]
 ```
 
 ---
@@ -192,6 +196,7 @@ Swarm manager node
       └── exposes :8080  →  /metrics  /health/live  /health/ready
 ```
 
-Using `docker-socket-proxy` means the DEDA container cannot perform arbitrary
-Docker operations — it can only list services, inspect tasks, and update replica
-counts.
+The proxy narrows the exposed endpoint families and prevents DEDA from mounting
+the socket directly. Because service scaling requires `POST`, the proxy is not
+read-only and remains a privileged control-plane component. Keep its network
+private and review the [production guidance](../../../docs/production.md#docker-api-access).

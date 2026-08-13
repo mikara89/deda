@@ -4,7 +4,8 @@
 
 ## Context
 
-Trigger adapters (RabbitMQ management API, Prometheus query API) each issue
+Trigger adapters (RabbitMQ management API, Prometheus query API, and generic
+HTTP metric API) each issue
 outbound HTTP calls to external services. They need:
 
 - Their own timeout policy (different from the Docker Engine client — see
@@ -18,7 +19,7 @@ They must not share the singleton Docker Engine `HttpClient`.
 
 ## Decision
 
-`Program.cs` registers two named `HttpClient` instances via
+`Program.cs` registers three named `HttpClient` instances via
 `builder.Services.AddHttpClient(...)`:
 
 ```csharp
@@ -27,17 +28,24 @@ builder.Services.AddHttpClient("rabbitmq")
 
 builder.Services.AddHttpClient("prometheus")
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
+
+builder.Services.AddHttpClient("http")
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
 ```
 
 Each trigger adapter receives `IHttpClientFactory` and calls
-`_httpClientFactory.CreateClient("rabbitmq")` or `CreateClient("prometheus")` to
-obtain its client. The timeout can also be overridden per-service via
+`_httpClientFactory.CreateClient("rabbitmq")`, `CreateClient("prometheus")`, or
+`CreateClient("http")` to obtain its client. The timeout can also be overridden per-service via
 `trigger.timeoutSeconds` in the service label, which sets `client.Timeout` after
 creation.
 
-The named client timeout is driven by
+The named-client baseline is driven by
 `DedaHostOptions.DefaultHttpTimeoutSeconds` (env var
-`DEDA_HTTP_TIMEOUT_SECONDS`, default 5 s, range 1–120 s).
+`DEDA_HTTP_TIMEOUT_SECONDS`, default 5 s, range 1–120 s). Current adapters set
+`client.Timeout` after creation to the service value or their own 5-second
+fallback, so the current fallback remains 5 seconds even when the global
+baseline is changed. Prometheus and HTTP overrides are capped at 120 seconds;
+RabbitMQ accepts any positive integer representable by `TimeSpan`.
 
 ## Alternatives Considered
 
@@ -62,7 +70,6 @@ The named client timeout is driven by
 - Polly retry or circuit-breaker policies can be added per named client in
   `Program.cs` without touching trigger adapter code — a clean extension point
   for v1.0.0.
-- The `DefaultHttpTimeoutSeconds` setting applies as the baseline for all
-  trigger clients; individual services can shorten it further via
-  `trigger.timeoutSeconds` but cannot extend beyond the factory-level timeout
-  (which acts as a hard ceiling).
+- `trigger.timeoutSeconds` is the effective request timeout. The named-client
+  baseline is currently overwritten by each adapter; making the global setting
+  the shared fallback would require passing it into adapter configuration.
