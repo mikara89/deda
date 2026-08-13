@@ -20,7 +20,7 @@ All names use the `com.deda.autoscale.` prefix.
 | `trigger.url` | Yes | — | RabbitMQ Management API base URL, such as `http://rabbitmq:15672` |
 | `trigger.queue` | Yes | — | Queue name |
 | `trigger.vhost` | No | `/` | RabbitMQ virtual host |
-| `trigger.metric` | No | `messages` | Supported queue properties: `messages`, `messages_ready`, `messages_unacknowledged` |
+| `trigger.metric` | No | `messages` | Documented metrics: `messages`, `messages_ready`, `messages_unacknowledged` |
 | `trigger.timeoutSeconds` | No | `5` | Positive integer seconds |
 | `trigger.credentialsSecret` | No | Global credentials | One mounted Docker secret name containing `username:password` |
 

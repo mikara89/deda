@@ -6,7 +6,7 @@ autoscaled workload.
 
 ## Deploy
 
-Deploy from the example directory so the Prometheus bind mount resolves:
+Deploy the stack. Swarm distributes `prometheus.yml` as a Docker config:
 
 ```bash
 cd examples/observability

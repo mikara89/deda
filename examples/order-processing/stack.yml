@@ -11,6 +11,10 @@ secrets:
 volumes:
   rabbitmq_data:
 
+configs:
+  prometheus_config:
+    file: ./prometheus.yml
+
 services:
   docker-proxy:
     image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
@@ -30,7 +34,7 @@ services:
         constraints: [node.role == manager]
 
   deda:
-    image: ghcr.io/mikara89/deda:latest
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.1.0-preview.1}
     networks: [orders]
     secrets: [orders-rabbitmq]
     environment:
@@ -96,8 +100,9 @@ services:
     image: prom/prometheus:v2.54.1
     networks: [orders]
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
     ports:
       - target: 9090
         published: 9092

@@ -37,7 +37,7 @@ services:
         constraints: [node.role == manager]
 
   deda:
-    image: ghcr.io/mikara89/deda:latest
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.1.0-preview.1}
     networks: [deda_control]
     environment:
       DOCKER_HOST: "http://docker-proxy:2375"

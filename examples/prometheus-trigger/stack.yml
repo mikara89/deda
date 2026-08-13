@@ -16,7 +16,7 @@ version: "3.8"
 # Prerequisites:
 #   • Docker Swarm mode active (docker swarm init)
 #
-# Deploy (from this directory so ./prometheus.yml resolves):
+# Deploy:
 #   cd examples/prometheus-trigger
 #   docker stack deploy -c stack.yml deda-prometheus
 #
@@ -33,6 +33,10 @@ networks:
   deda_net:
     driver: overlay
     attachable: false
+
+configs:
+  prometheus_config:
+    file: ./prometheus.yml
 
 services:
 
@@ -62,7 +66,7 @@ services:
   # ── deda ────────────────────────────────────────────────────────────────────
   # No secrets needed — Prometheus trigger requires no credentials by default
   deda:
-    image: ghcr.io/mikara89/deda:latest
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.1.0-preview.1}
     networks: [deda_net]
     environment:
       DEDA_POLL_SECONDS: "10"
@@ -93,8 +97,8 @@ services:
           memory: 64M
 
   # ── prometheus ───────────────────────────────────────────────────────────────
-  # Scrapes Traefik request-rate metrics. Config file is mounted from the same
-  # directory — run `docker stack deploy` from examples/prometheus-trigger/.
+  # Scrapes Traefik request-rate metrics. Swarm distributes the config to the
+  # node that runs this task.
   prometheus:
     image: prom/prometheus:v2.54.1
     networks: [deda_net]
@@ -102,8 +106,9 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=1d" # minimal retention for dev
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
     deploy:

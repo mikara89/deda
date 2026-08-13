@@ -49,8 +49,9 @@ docker network create --driver overlay deda_metrics
 docker stack deploy -c examples/minimal/stack.yml deda
 ```
 
-The example uses `ghcr.io/mikara89/deda:latest` for evaluation. Pin a released
-version or immutable digest in production. The [Docker CLI plugin](../src/tools/Docker.Deda.Cli/README.md)
+The example defaults to the compatible pre-release
+`ghcr.io/mikara89/deda:v0.1.0-preview.1`. Pin a final release or immutable
+digest in production. The [Docker CLI plugin](../src/tools/Docker.Deda.Cli/README.md)
 can render and deploy the same base topology with `docker deda install`.
 
 DEDA can also use `/var/run/docker.sock` directly, but the socket grants broad

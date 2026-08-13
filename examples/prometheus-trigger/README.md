@@ -15,7 +15,7 @@ configuration references Docker's stack-scoped network name.
 
 ## Deploy
 
-Deploy from this directory so the Prometheus bind mount resolves:
+Deploy the stack. Swarm distributes `prometheus.yml` as a Docker config:
 
 ```bash
 cd examples/prometheus-trigger

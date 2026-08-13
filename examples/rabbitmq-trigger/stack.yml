@@ -67,7 +67,7 @@ services:
 
   # ── deda ────────────────────────────────────────────────────────────────────
   deda:
-    image: ghcr.io/mikara89/deda:latest
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.1.0-preview.1}
     networks: [deda_net]
     secrets:
       - rabbitmq_user # mounted at /run/secrets/rabbitmq_user

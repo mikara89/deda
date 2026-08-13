@@ -25,9 +25,14 @@ expected behavior, verification, cleanup, and links to canonical documentation.
 docker swarm init
 ```
 
-Examples use `ghcr.io/mikara89/deda:latest` so the files stay easy to try.
-Replace it with a released semantic version or immutable digest before using an
-example as a production base.
+Examples default to the compatible pre-release
+`ghcr.io/mikara89/deda:v0.1.0-preview.1`. Override `DEDA_IMAGE` with another
+released tag or immutable digest when evaluating a different version:
+
+```bash
+DEDA_IMAGE=ghcr.io/mikara89/deda@sha256:DIGEST \
+  docker stack deploy -c examples/minimal/stack.yml deda
+```
 
 Every DEDA topology uses the pinned socket-proxy image and a private overlay
 network. The proxy narrows Docker API endpoint families, but service scaling

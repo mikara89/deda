@@ -56,7 +56,7 @@ services:
 
   # ── deda ────────────────────────────────────────────────────────────────────
   deda:
-    image: ghcr.io/mikara89/deda:latest # replace with a pinned tag in production
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.1.0-preview.1}
     networks: [deda_net, deda_metrics]
     environment:
       # How often (in seconds) to poll each service's trigger and reconcile

@@ -34,7 +34,7 @@ These are disposable demo values matching the isolated RabbitMQ container.
 
 ## Deploy
 
-Deploy from this directory so Prometheus can mount its configuration:
+Deploy the stack. Swarm distributes `prometheus.yml` as a Docker config:
 
 ```bash
 cd examples/order-processing
