@@ -41,7 +41,12 @@ wait_http() {
   done
 
   echo "Timed out waiting for $url" >&2
+  curl --verbose --header "Host: ${host_header:-127.0.0.1}" "$url" >&2 || true
   docker service ls >&2 || true
+  if [[ "${#ACTIVE_STACKS[@]}" -gt 0 ]]; then
+    stack=${ACTIVE_STACKS[$((${#ACTIVE_STACKS[@]} - 1))]}
+    docker service logs --tail 200 "${stack}_deda" >&2 || true
+  fi
   return 1
 }
 
