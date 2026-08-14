@@ -104,6 +104,10 @@ simulator_get() { docker run --rm --network "${DEDA_QUAL_STACK}_control" curlima
 simulator_put() { docker run --rm -i --network "${DEDA_QUAL_STACK}_control" curlimages/curl:8.10.1 -fsS -X POST -H 'content-type: application/json' --data-binary @- "$(simulator_url)/__admin/state"; }
 set_state() { printf '%s' "$1" | simulator_put >/dev/null; }
 request_count() { simulator_get /__admin/requests | jq -r .count; }
+provider_request_count() {
+  local fragment=$1
+  simulator_get /__admin/requests | jq -r --arg fragment "$fragment" '[.requests[] | select(.endpoint | contains($fragment))] | length'
+}
 wait_for_provider_request_after() {
   local baseline=$1 description=$2
   wait_until "$description" 45 bash -c "count=\$(docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/__admin/requests' | jq -r .count); (( count > $baseline ))" || fail_scenario "timed out waiting for $description"
