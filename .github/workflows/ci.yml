@@ -118,6 +118,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate every example stack
         run: bash tests/examples/validate-stacks.sh
+      - name: Validate qualification harness (no cloud access)
+        run: |
+          find tests/qualification/v0.2/hetzner -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          if command -v shellcheck >/dev/null; then find tests/qualification/v0.2/hetzner -type f -name '*.sh' -print0 | xargs -0 shellcheck --exclude=SC1091; fi
+          jq empty tests/qualification/v0.2/hetzner/credential-policy.json.tpl
+          bash tests/qualification/v0.2/hetzner/static-tests.sh
+          (cd tests/qualification/v0.2/hetzner && DEDA_IMAGE=ghcr.io/example/deda:v0.2.0-rc.1 QUAL_SECRET_PREFIX=deda-qual-ci docker stack config -c stack.yml >/dev/null)
       - name: Build image
         run: docker build -f src/Deda.Host/Dockerfile -t deda:examples .
       - name: Smoke-test representative examples
