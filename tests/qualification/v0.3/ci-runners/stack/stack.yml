@@ -79,6 +79,7 @@ services:
       replicas: 0
       labels:
         com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.activationThreshold: "0"
         com.deda.autoscale.max: "10"
         com.deda.autoscale.targetPerReplica: "1"
         com.deda.autoscale.cooldownSeconds: "0"
@@ -110,6 +111,7 @@ services:
       replicas: 0
       labels:
         com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.activationThreshold: "0"
         com.deda.autoscale.max: "10"
         com.deda.autoscale.targetPerReplica: "1"
         com.deda.autoscale.cooldownSeconds: "0"
@@ -131,6 +133,7 @@ services:
       replicas: 0
       labels:
         com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.activationThreshold: "0"
         com.deda.autoscale.max: "10"
         com.deda.autoscale.targetPerReplica: "1"
         com.deda.autoscale.cooldownSeconds: "0"
@@ -157,6 +160,7 @@ services:
       replicas: 0
       labels:
         com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.activationThreshold: "0"
         com.deda.autoscale.max: "10"
         com.deda.autoscale.targetPerReplica: "1"
         com.deda.autoscale.cooldownSeconds: "0"
