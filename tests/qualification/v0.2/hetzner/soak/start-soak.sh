@@ -9,9 +9,8 @@ while (($#)); do
     *) die "Unknown option: $1";;
   esac
 done
-[[ "$duration" =~ ^([1-9][0-9]*)([hm])$ ]] || { echo 'Duration must be a positive number followed by h or m, for example 24h.' >&2; exit 2; }
+seconds=$(duration_to_seconds "$duration") || die 'Duration must be a positive number followed by h or m, for example 24h.'
 [[ "$services" =~ ^[0-9]+$ && "$services" -ge 1 && "$services" -le 50 ]] || die 'Service count must be between 1 and 50.'
-seconds=${BASH_REMATCH[1]}; [[ ${BASH_REMATCH[2]} == h ]] && seconds=$((seconds * 3600)) || seconds=$((seconds * 60))
 remote="/var/lib/deda-qualification/$RUN_ID/soak"; local="$RUN_DIR/soak"; mkdir -p "$local"
 manager_exec "! systemctl is-active --quiet deda-qualification-soak.service" || die 'A qualification soak service is already running on manager-1.'
 scp_node MANAGER_1_PUBLIC "$SCRIPT_DIR/soak/soak-driver.sh" "/root/deda-qualification-soak-driver.sh"

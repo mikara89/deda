@@ -23,6 +23,17 @@ require_command() { command -v "$1" >/dev/null 2>&1 || die "Required command not
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 new_run_id() { printf '%s-%s\n' "$(date -u +%Y%m%d-%H%M%S)" "$(od -An -N3 -tx1 </dev/urandom | tr -d ' \n')"; }
 safe_label_value() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-'; }
+duration_to_seconds() {
+  local duration=$1 value unit
+  [[ "$duration" =~ ^([1-9][0-9]*)([hm])$ ]] || return 1
+  value=${BASH_REMATCH[1]}
+  unit=${BASH_REMATCH[2]}
+  if [[ "$unit" == h ]]; then
+    printf '%s\n' "$((value * 3600))"
+  else
+    printf '%s\n' "$((value * 60))"
+  fi
+}
 
 init_defaults() {
   : "${DEDA_QUAL_LOCATION:=nbg1}" "${DEDA_QUAL_SERVER_TYPE:=cx23}" "${DEDA_QUAL_IMAGE:=ubuntu-24.04}"
