@@ -56,18 +56,18 @@ timing sleeps.
 
 ## Interpreting status
 
-`RESULT.md` names every deterministic scenario and writes both aggregate
-statuses. A deterministic PASS means only that the deterministic qualification
-passed. It must report:
+`RESULT.md` names every deterministic scenario and separates fast and full
+deterministic statuses. A fast PASS does not imply full deterministic PASS.
+The aggregate must report:
 
 ```text
 RELEASE QUALIFICATION: NOT_QUALIFIED
 ```
 
-until GitHub Actions, Azure Pipelines, and GitLab CI real-provider runs all
-have PASS evidence, and every mandatory deterministic scenario has passed. Any
-mandatory provider failure makes release qualification `FAIL`; `NOT_RUN` is
-never converted into `PASS`.
+until full deterministic qualification, GitHub Actions, Azure Pipelines, and
+GitLab CI real-provider runs all have PASS evidence. Any mandatory provider
+failure makes release qualification `FAIL`; `NOT_RUN` is never converted into
+`PASS`.
 
 ## Operator prerequisites
 

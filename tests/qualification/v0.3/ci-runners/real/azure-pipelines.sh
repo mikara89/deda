@@ -8,7 +8,7 @@ export_real_candidate_images
 init_run
 begin_real azure-pipelines
 count=${AZURE_QUAL_JOB_COUNT:-3}; timeout=${AZURE_QUAL_TIMEOUT_SECONDS:-1800}; [[ "$count" =~ ^[1-9][0-9]*$ ]] || die 'AZURE_QUAL_JOB_COUNT must be a positive integer'
-stack=${REAL_AZURE_STACK:-deda-real-azure}
+stack=${REAL_AZURE_STACK:-$(real_stack_name azure)}
 service_name=$(real_service "$stack" azure-runner)
 tmpdir=$(mktemp -d)
 timeline="$(real_result_dir azure-pipelines)/swarm-scale-timeline.ndjson"
@@ -32,7 +32,7 @@ for id in "${run_ids[@]}"; do
   file="$(real_result_dir azure-pipelines)/run-$id.json"
   while :; do
     curl --fail --silent --show-error -u ":$token" "$base/$id?api-version=7.1" | jq '{id,state,result,createdDate,finishedDate}' > "$file"
-    curl --fail --silent --show-error -u ":$token" "$timeline_base/$id/timeline?api-version=7.1" | jq -r '.records[]?.workerName // ""' | grep -F 'deda-ado-' >> "$agents_file" || true
+    curl --fail --silent --show-error -u ":$token" "$timeline_base/$id/timeline?api-version=7.1" | jq -r '.records[]?.workerName // ""' | grep -v '^$' >> "$agents_file" || true
     capture_real_runner_hostnames "$service_name" >> "$hostfile"
     sort -u "$hostfile" -o "$hostfile"
     record_scale "$timeline" "$service_name" azure-pipelines
@@ -43,7 +43,7 @@ for id in "${run_ids[@]}"; do
   [[ $(jq -r .result "$file") == succeeded ]] || { write_real azure-pipelines FAIL "Run $id did not succeed."; exit 1; }
 done
 unset token
-assert_azure_agent_attribution "$(real_result_dir azure-pipelines)" "$hostfile"
+assert_azure_agent_attribution "$(real_result_dir azure-pipelines)" "$hostfile" "$count"
 wait_real_desired "$service_name" 0 'Azure runner service scaled back to zero'
 wait_real_running_zero "$service_name" 'Azure runner tasks drained to zero'
 record_scale "$timeline" "$service_name" azure-pipelines

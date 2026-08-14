@@ -8,7 +8,7 @@ export_real_candidate_images
 init_run
 begin_real gitlab
 count=${GITLAB_QUAL_JOB_COUNT:-3}; timeout=${GITLAB_QUAL_TIMEOUT_SECONDS:-1800}; [[ "$count" =~ ^[1-9][0-9]*$ ]] || die 'GITLAB_QUAL_JOB_COUNT must be a positive integer'
-stack=${REAL_GITLAB_STACK:-deda-real-gitlab}
+stack=${REAL_GITLAB_STACK:-$(real_stack_name gitlab)}
 service_name=$(real_service "$stack" gitlab-runner)
 tmpdir=$(mktemp -d)
 timeline="$(real_result_dir gitlab)/swarm-scale-timeline.ndjson"

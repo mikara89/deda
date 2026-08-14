@@ -17,9 +17,13 @@ RESULTS_ROOT="$REPO_ROOT/tests/qualification/results"
 : "${GITHUB_RUNNER_QUALIFICATION_IMAGE:=deda-github-runner-qualification:ci}"
 : "${AZURE_RUNNER_QUALIFICATION_IMAGE:=deda-azure-runner-qualification:ci}"
 : "${GITLAB_RUNNER_QUALIFICATION_IMAGE:=deda-gitlab-runner-qualification:ci}"
+: "${GITHUB_RUNNER_CANDIDATE_IMAGE:=deda-github-runner:ci}"
+: "${AZURE_RUNNER_CANDIDATE_IMAGE:=deda-azure-runner:ci}"
+: "${GITLAB_RUNNER_CANDIDATE_IMAGE:=deda-gitlab-runner:ci}"
 [[ "$DEDA_QUAL_STACK" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo 'invalid DEDA_QUAL_STACK' >&2; exit 1; }
 export DEDA_QUAL_STACK QUAL_SECRET_PREFIX DEDA_IMAGE CI_SIMULATOR_IMAGE CI_RUNNER_SIMULATOR_IMAGE GITHUB_RUNNER_IMAGE AZURE_RUNNER_IMAGE GITLAB_RUNNER_IMAGE
 export GITHUB_RUNNER_QUALIFICATION_IMAGE AZURE_RUNNER_QUALIFICATION_IMAGE GITLAB_RUNNER_QUALIFICATION_IMAGE
+export GITHUB_RUNNER_CANDIDATE_IMAGE AZURE_RUNNER_CANDIDATE_IMAGE GITLAB_RUNNER_CANDIDATE_IMAGE
 
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 image_digest() { docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true; }
@@ -184,15 +188,18 @@ ensure_runner_images() {
 }
 
 ensure_runner_qualification_images() {
-  ensure_runner_images
+  local github_base=${GITHUB_RUNNER_CANDIDATE_IMAGE} azure_base=${AZURE_RUNNER_CANDIDATE_IMAGE} gitlab_base=${GITLAB_RUNNER_CANDIDATE_IMAGE}
+  if [[ "$github_base" == "deda-github-runner:ci" || "$azure_base" == "deda-azure-runner:ci" || "$gitlab_base" == "deda-gitlab-runner:ci" ]]; then
+    ensure_runner_images
+  fi
   if ! docker image inspect "$GITHUB_RUNNER_QUALIFICATION_IMAGE" >/dev/null 2>&1; then
-    docker build -f "$SCRIPT_DIR/simulator/real-runner/github.Dockerfile" --build-arg BASE_IMAGE=deda-github-runner:ci -t "$GITHUB_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
+    docker build -f "$SCRIPT_DIR/simulator/real-runner/github.Dockerfile" --build-arg BASE_IMAGE="$github_base" -t "$GITHUB_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
   fi
   if ! docker image inspect "$AZURE_RUNNER_QUALIFICATION_IMAGE" >/dev/null 2>&1; then
-    docker build -f "$SCRIPT_DIR/simulator/real-runner/azure.Dockerfile" --build-arg BASE_IMAGE=deda-azure-runner:ci -t "$AZURE_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
+    docker build -f "$SCRIPT_DIR/simulator/real-runner/azure.Dockerfile" --build-arg BASE_IMAGE="$azure_base" -t "$AZURE_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
   fi
   if ! docker image inspect "$GITLAB_RUNNER_QUALIFICATION_IMAGE" >/dev/null 2>&1; then
-    docker build -f "$SCRIPT_DIR/simulator/real-runner/gitlab.Dockerfile" --build-arg BASE_IMAGE=deda-gitlab-runner:ci -t "$GITLAB_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
+    docker build -f "$SCRIPT_DIR/simulator/real-runner/gitlab.Dockerfile" --build-arg BASE_IMAGE="$gitlab_base" -t "$GITLAB_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
   fi
 }
 

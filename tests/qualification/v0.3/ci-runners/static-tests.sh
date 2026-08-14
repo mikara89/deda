@@ -22,6 +22,17 @@ for name in 01-github-capacity 02-azure-capacity 03-gitlab-capacity 04-active-jo
 done
 grep -Fq -- '--confirm-real-provider-tests' "$SCRIPT_DIR/real/run-all.sh"
 grep -Fq 'RELEASE QUALIFICATION: **NOT_QUALIFIED**' "$SCRIPT_DIR/collect-evidence.sh"
+grep -Fq 'fullDeterministicQualification' "$SCRIPT_DIR/collect-evidence.sh"
+grep -Fq 'fastQualification' "$SCRIPT_DIR/collect-evidence.sh"
+grep -Fq 'refusing to replace an unrelated resource' "$SCRIPT_DIR/real/common.sh"
+grep -Fq 'real_stack_name' "$SCRIPT_DIR/real/common.sh"
+grep -Fq 'deda_ci_required_capacity' "$SCRIPT_DIR/real/common.sh"
+grep -Fq -- '--timestamps --raw' "$SCRIPT_DIR/scenarios/04-active-job-protection.sh"
+grep -Fq -- 'head_branch == $ref' "$SCRIPT_DIR/real/github.sh"
+if grep -Fq -- "grep -F 'deda-ado-'" "$SCRIPT_DIR/real/azure-pipelines.sh"; then
+  echo 'Azure qualification must not pre-filter worker identities before validation' >&2
+  exit 1
+fi
 if command -v docker >/dev/null 2>&1; then
   policy="$SCRIPT_DIR/stack/credential-policy.json"
   trap 'rm -f "$policy"' EXIT

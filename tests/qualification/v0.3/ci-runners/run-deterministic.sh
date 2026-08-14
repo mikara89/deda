@@ -6,6 +6,7 @@ source "$SCRIPT_DIR/common.sh"
 
 mode=${1:---full}
 [[ "$mode" == --fast || "$mode" == --full ]] || die 'usage: run-deterministic.sh [--fast|--full]'
+export DEDA_QUAL_MODE=${mode#--}
 init_run
 on_exit() {
   local status=$?
@@ -16,6 +17,12 @@ on_exit() {
 }
 trap on_exit EXIT
 if [[ "$mode" == --full ]]; then
+  require dotnet
+  dotnet restore "$REPO_ROOT/Deda.sln"
+  dotnet build "$REPO_ROOT/Deda.sln" --configuration Release --no-restore
+  [[ -z "${GITHUB_QUAL_RUNNER_IMAGE:-}" ]] || export GITHUB_RUNNER_CANDIDATE_IMAGE="$GITHUB_QUAL_RUNNER_IMAGE"
+  [[ -z "${AZURE_QUAL_RUNNER_IMAGE:-}" ]] || export AZURE_RUNNER_CANDIDATE_IMAGE="$AZURE_QUAL_RUNNER_IMAGE"
+  [[ -z "${GITLAB_QUAL_RUNNER_IMAGE:-}" ]] || export GITLAB_RUNNER_CANDIDATE_IMAGE="$GITLAB_QUAL_RUNNER_IMAGE"
   ensure_runner_qualification_images
   export GITHUB_RUNNER_IMAGE="$GITHUB_RUNNER_QUALIFICATION_IMAGE"
   export AZURE_RUNNER_IMAGE="$AZURE_RUNNER_QUALIFICATION_IMAGE"

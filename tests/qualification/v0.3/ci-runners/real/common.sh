@@ -3,6 +3,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 QUAL_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 source "$QUAL_ROOT/common.sh"
+REAL_ACTIVE_STACK=""
 
 confirm_real() {
   [[ ${1:-} == --confirm-real-provider-tests ]] || die 'Real-provider qualification requires --confirm-real-provider-tests; credentials alone are never authorization.'
@@ -48,20 +49,6 @@ write_real() {
   file="$(real_result_dir "$provider")/result.json"
   jq -n --arg provider "$provider" --arg status "$status" --arg at "$(utc_now)" --arg detail "$detail" '{provider:$provider,status:$status,at:$at,detail:$detail}' > "$file"
 }
-safe_json() {
-  # Keep only provider identifiers, timestamps, and job conclusions. This is
-  # intentionally narrower than a raw API response, which could contain URLs
-  # or user-supplied metadata inappropriate for release evidence.
-  jq -c "$1"
-}
-poll_for_completion() {
-  local description=$1 timeout=$2 check=$3
-  local end=$((SECONDS + timeout))
-  until eval "$check"; do
-    (( SECONDS < end )) || die "Timed out waiting for $description after ${timeout}s"
-    sleep 5
-  done
-}
 wait_real() {
   local description=$1 timeout=$2; shift 2
   wait_until "$description" "$timeout" "$@" || die "Timed out waiting for $description"
@@ -84,20 +71,41 @@ host_from_url() {
 }
 
 real_service() { printf '%s_%s' "$1" "$2"; }
+run_suffix() { printf '%s' "$RUN_ID" | sed 's/[^a-zA-Z0-9_-]/-/g'; }
+real_stack_name() { printf 'deda-real-%s-%s' "$1" "$(run_suffix)"; }
 real_desired() { docker service inspect "$1" --format '{{.Spec.Mode.Replicated.Replicas}}' 2>/dev/null || true; }
 real_running() { docker service ps "$1" --filter desired-state=running --format '{{.CurrentState}}' 2>/dev/null | grep -c '^Running' || true; }
+deda_ci_metric_value() {
+  local metric=$1 service_name=$2
+  docker run --rm --network "${REAL_ACTIVE_STACK}_deda_net" curlimages/curl:8.10.1 -fsS "http://$(real_service "$REAL_ACTIVE_STACK" deda):8080/metrics" 2>/dev/null \
+    | grep -F "$metric" \
+    | grep -F "service=\"$service_name\"" \
+    | sed -n 's/.*} \([0-9][0-9]*\).*/\1/p' \
+    | tail -n 1
+}
 create_real_secret() {
   local name=$1 file=$2
-  if docker secret inspect "$name" >/dev/null 2>&1; then docker secret rm "$name" >/dev/null; fi
+  if docker secret inspect "$name" >/dev/null 2>&1; then die "Docker secret '$name' already exists; refusing to replace an unrelated resource"; fi
   docker secret create "$name" "$file" >/dev/null
 }
 
+ensure_real_stack_available() {
+  local stack=$1
+  if docker stack ls --format '{{.Name}}' | grep -Fxq "$stack"; then
+    die "Docker stack '$stack' already exists; refusing to reuse an unrelated stack"
+  fi
+}
+
 record_scale() {
-  local file=$1 service_name=$2 provider=$3 desired running
+  local file=$1 service_name=$2 provider=$3 desired running required queued active
   desired=$(real_desired "$service_name")
   running=$(real_running "$service_name")
-  jq -n --arg at "$(utc_now)" --arg provider "$provider" --arg service "$service_name" --arg desired "$desired" --arg running "$running" \
-    '{at:$at,provider:$provider,service:$service,desiredReplicas:(if $desired == "" then 0 else ($desired|tonumber) end),runningTasks:(if $running == "" then 0 else ($running|tonumber) end)}' >> "$file"
+  required=$(deda_ci_metric_value deda_ci_required_capacity "$service_name")
+  queued=$(deda_ci_metric_value deda_ci_jobs_queued "$service_name")
+  active=$(deda_ci_metric_value deda_ci_jobs_active "$service_name")
+  jq -n --arg at "$(utc_now)" --arg provider "$provider" --arg service "$service_name" \
+    --arg desired "$desired" --arg running "$running" --arg required "$required" --arg queued "$queued" --arg active "$active" \
+    '{at:$at,provider:$provider,service:$service,desiredReplicas:(if $desired == "" then 0 else ($desired|tonumber) end),runningTasks:(if $running == "" then 0 else ($running|tonumber) end),requiredCapacity:(if $required == "" then 0 else ($required|tonumber) end),queuedJobs:(if $queued == "" then 0 else ($queued|tonumber) end),activeJobs:(if $active == "" then 0 else ($active|tonumber) end)}' >> "$file"
 }
 
 wait_real_desired() {
@@ -129,6 +137,8 @@ assert_scale_timeline() {
       and ([$rows[] | select(.runningTasks > 0)] | length > 0)
       and ([$rows[] | select(.desiredReplicas == 0)] | length > 0)
       and ([$rows[] | select(.runningTasks == 0)] | length > 0)
+      and ([$rows[] | select(.requiredCapacity > 0)] | length > 0)
+      and ([$rows[] | select(.requiredCapacity > 0 and .desiredReplicas < .requiredCapacity)] | length == 0)
   ' "$file" >/dev/null || die "$service_name did not produce a complete 0→N→active→0 Swarm scale timeline"
 }
 
@@ -176,9 +186,11 @@ assert_github_runner_attribution() {
 }
 
 assert_azure_agent_attribution() {
-  local dir=$1 hostfile=$2 agent host
+  local dir=$1 hostfile=$2 expected_jobs=$3 agent host unique_agents
   [[ -s "$hostfile" ]] || die 'No running Azure qualification task hostnames were captured'
   [[ -s "$dir/agent-names.txt" ]] || die 'No Azure pipeline agent identities were captured'
+  unique_agents=$(sort -u "$dir/agent-names.txt" | grep -c '^deda-ado-')
+  (( unique_agents >= expected_jobs )) || die "Azure qualification captured only $unique_agents DEDA agent identities for $expected_jobs expected jobs"
   while IFS= read -r agent; do
     [[ -n "$agent" ]] || continue
     host=${agent#deda-ado-}
@@ -209,8 +221,10 @@ teardown_real_stack() {
 }
 
 deploy_github_stack() {
-  local tmpdir=$1 stack=${REAL_GITHUB_STACK:-deda-real-github} compose policy api api_host labels repositories
+  local tmpdir=$1 stack=${REAL_GITHUB_STACK:-$(real_stack_name github)} compose policy api api_host labels repositories
   require_docker_swarm
+  ensure_real_stack_available "$stack"
+  REAL_ACTIVE_STACK="$stack"
   compose="$tmpdir/stack.yml"; policy="$tmpdir/policy.json"
   api=${GITHUB_QUAL_API_URL:-https://api.github.com}
   api_host=$(host_from_url "$api")
@@ -240,8 +254,10 @@ deploy_github_stack() {
 }
 
 deploy_azure_stack() {
-  local tmpdir=$1 stack=${REAL_AZURE_STACK:-deda-real-azure} compose policy api_host org_url pool demands
+  local tmpdir=$1 stack=${REAL_AZURE_STACK:-$(real_stack_name azure)} compose policy api_host org_url pool demands
   require_docker_swarm
+  ensure_real_stack_available "$stack"
+  REAL_ACTIVE_STACK="$stack"
   compose="$tmpdir/stack.yml"; policy="$tmpdir/policy.json"
   org_url=${AZURE_QUAL_ORGANIZATION_URL%/}
   api_host=$(host_from_url "$org_url")
@@ -267,8 +283,10 @@ deploy_azure_stack() {
 }
 
 deploy_gitlab_stack() {
-  local tmpdir=$1 stack=${REAL_GITLAB_STACK:-deda-real-gitlab} compose policy api_host url projects tags run_untagged
+  local tmpdir=$1 stack=${REAL_GITLAB_STACK:-$(real_stack_name gitlab)} compose policy api_host url projects tags run_untagged
   require_docker_swarm
+  ensure_real_stack_available "$stack"
+  REAL_ACTIVE_STACK="$stack"
   compose="$tmpdir/stack.yml"; policy="$tmpdir/policy.json"
   url=${GITLAB_QUAL_URL%/}
   api_host=$(host_from_url "$url")

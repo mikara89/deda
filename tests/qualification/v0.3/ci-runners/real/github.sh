@@ -9,7 +9,7 @@ init_run
 begin_real github
 api=${GITHUB_QUAL_API_URL:-https://api.github.com}; ref=${GITHUB_QUAL_REF:-main}; count=${GITHUB_QUAL_JOB_COUNT:-3}; timeout=${GITHUB_QUAL_TIMEOUT_SECONDS:-1800}
 [[ "$count" =~ ^[1-9][0-9]*$ ]] || die 'GITHUB_QUAL_JOB_COUNT must be a positive integer'
-stack=${REAL_GITHUB_STACK:-deda-real-github}
+stack=${REAL_GITHUB_STACK:-$(real_stack_name github)}
 service_name=$(real_service "$stack" github-runner)
 tmpdir=$(mktemp -d)
 timeline="$(real_result_dir github)/swarm-scale-timeline.ndjson"
@@ -21,6 +21,7 @@ wait_real_desired "$service_name" 0 'initial GitHub runner service at zero'
 record_scale "$timeline" "$service_name" github
 token=$(secret "$GITHUB_QUAL_QUEUE_TOKEN_FILE")
 dispatch_body=$(jq -n --arg ref "$ref" '{ref:$ref}')
+dispatch_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 list_runs() { curl --fail --silent --show-error -H "Authorization: Bearer $token" -H 'Accept: application/vnd.github+json' "$api/repos/$GITHUB_QUAL_OWNER/$GITHUB_QUAL_REPOSITORY/actions/workflows/$GITHUB_QUAL_WORKFLOW/runs?event=workflow_dispatch&per_page=100"; }
 before=$(list_runs | jq -r '.workflow_runs[]?.id')
 for _ in $(seq 1 "$count"); do
@@ -30,11 +31,13 @@ done
 run_ids=()
 end=$((SECONDS + timeout))
 while (( ${#run_ids[@]} < count )); do
-  mapfile -t run_ids < <(list_runs | jq -r --arg before "$before" '.workflow_runs[]? | select((.id|tostring) as $id | ($before | split("\n") | index($id) | not)) | .id' | head -n "$count")
+  mapfile -t run_ids < <(list_runs | jq -r --arg before "$before" --arg ref "$ref" --arg since "$dispatch_started_at" '.workflow_runs[]? | select(.event == "workflow_dispatch" and .head_branch == $ref and .created_at >= $since) | select((.id|tostring) as $id | ($before | split("\n") | index($id) | not)) | .id' | head -n "$count")
   (( ${#run_ids[@]} >= count )) && break
   (( SECONDS < end )) || { write_real github FAIL 'Timed out discovering dispatched workflow runs.'; exit 1; }
   sleep 5
 done
+candidate_count=$(list_runs | jq -r --arg before "$before" --arg ref "$ref" --arg since "$dispatch_started_at" '.workflow_runs[]? | select(.event == "workflow_dispatch" and .head_branch == $ref and .created_at >= $since) | select((.id|tostring) as $id | ($before | split("\n") | index($id) | not)) | .id' | wc -l)
+(( candidate_count == count )) || { write_real github FAIL "Expected $count new qualification workflow runs but found $candidate_count; refusing to guess."; exit 1; }
 wait_real_desired_positive "$service_name" 'GitHub runner service scaled up for dispatched jobs'
 wait_real_running_positive "$service_name" 'GitHub runner tasks started for dispatched jobs'
 capture_real_runner_hostnames "$service_name" > "$hostfile"

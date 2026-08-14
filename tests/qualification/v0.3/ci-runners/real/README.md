@@ -31,6 +31,7 @@ GitLab queue token is used as a `PRIVATE-TOKEN` and must have API access to
 create and read pipelines.
 
 The aggregate remains `NOT_QUALIFIED` unless the run directory already contains
-the matching deterministic `result.json`, manifest, and candidate identity. It
-becomes `PASS` only when all three provider results pass and candidate binding
-succeeds; any provider or candidate failure produces `FAIL`/`NOT_QUALIFIED`.
+matching full-deterministic `result.json`, manifest, and candidate identity.
+It becomes `PASS` only when full deterministic qualification is `PASS`, all
+three provider results pass, and candidate binding succeeds; any provider or
+candidate failure produces `FAIL`/`NOT_QUALIFIED`.
