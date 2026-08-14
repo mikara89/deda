@@ -1,0 +1,208 @@
+version: "3.8"
+
+networks:
+  control:
+    driver: overlay
+    attachable: true
+
+volumes:
+  redis_data:
+
+configs:
+  credential_policy:
+    file: ./credential-policy.json
+  prometheus_config:
+    file: ./prometheus.yml
+
+secrets:
+  rabbitmq_user:
+    external: true
+    name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_rabbitmq_user
+  rabbitmq_pass:
+    external: true
+    name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_rabbitmq_pass
+  qualification_rabbitmq_credentials:
+    external: true
+    name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_rabbitmq_credentials
+
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    networks: [control]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SERVICES: "1"
+      TASKS: "1"
+      NODES: "1"
+      SWARM: "1"
+      VERSION: "1"
+      POST: "1"
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  redis:
+    image: redis:7-alpine
+    networks: [control]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis_data:/data]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  rabbitmq:
+    image: rabbitmq:4.1-management
+    networks: [control]
+    secrets:
+      - rabbitmq_user
+      - rabbitmq_pass
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export RABBITMQ_DEFAULT_USER="$$(cat /run/secrets/rabbitmq_user)"
+        export RABBITMQ_DEFAULT_PASS="$$(cat /run/secrets/rabbitmq_pass)"
+        exec docker-entrypoint.sh rabbitmq-server
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  rabbit-init:
+    image: curlimages/curl:8.10.1
+    networks: [control]
+    secrets:
+      - rabbitmq_user
+      - rabbitmq_pass
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        user="$$(cat /run/secrets/rabbitmq_user)"
+        pass="$$(cat /run/secrets/rabbitmq_pass)"
+        until curl --fail --silent --user "$$user:$$pass" http://rabbitmq:15672/api/overview >/dev/null; do sleep 2; done
+        curl --fail --silent --show-error --user "$$user:$$pass" -X PUT \
+          -H 'content-type: application/json' -d '{"durable":true,"auto_delete":false,"arguments":{}}' \
+          http://rabbitmq:15672/api/queues/%2F/qualification >/dev/null
+    deploy:
+      restart_policy:
+        condition: none
+      placement:
+        constraints: [node.role == manager]
+
+  pushgateway:
+    image: prom/pushgateway:v1.11.1
+    networks: [control]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    networks: [control]
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=1d"]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  deda:
+    image: ${DEDA_IMAGE:?DEDA_IMAGE_required}
+    networks: [control]
+    secrets:
+      - rabbitmq_user
+      - rabbitmq_pass
+      - qualification_rabbitmq_credentials
+    configs:
+      - source: credential_policy
+        target: /run/deda/credential-policy.json
+        mode: 0444
+    environment:
+      DOCKER_HOST: http://docker-proxy:2375
+      DEDA_POLL_SECONDS: "2"
+      DEDA_MAX_CONCURRENT_SERVICES: "16"
+      DEDA_RECONCILE_TIMEOUT_SECONDS: "60"
+      DEDA_READINESS_MAX_AGE_SECONDS: "20"
+      DEDA_REDIS_CONNECTION: redis:6379,abortConnect=false
+      DEDA_LEADER_LOCK_KEY: deda-qualification:leader
+      DEDA_LEADER_LEASE_SECONDS: "15"
+      DEDA_LEADER_RENEW_SECONDS: "5"
+      DEDA_CREDENTIAL_POLICY_FILE: /run/deda/credential-policy.json
+      RABBITMQ_USER_FILE: /run/secrets/rabbitmq_user
+      RABBITMQ_PASS_FILE: /run/secrets/rabbitmq_pass
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+        delay: 30s
+      placement:
+        constraints: [node.role == manager]
+        preferences:
+          - spread: node.id
+      update_config:
+        parallelism: 1
+        order: start-first
+
+  basic-worker:
+    image: alpine:3.22
+    command: ["sleep", "infinity"]
+    networks: [control]
+    deploy:
+      replicas: 1
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.min: "1"
+        com.deda.autoscale.max: "10"
+        com.deda.autoscale.targetPerReplica: "10"
+        com.deda.autoscale.activationThreshold: "0"
+        com.deda.autoscale.cooldownSeconds: "0"
+        com.deda.autoscale.scaleDownDelaySeconds: "0"
+        com.deda.autoscale.stepUp: "0"
+        com.deda.autoscale.stepDown: "0"
+        com.deda.autoscale.trigger.type: "prometheus"
+        com.deda.autoscale.trigger.url: "http://prometheus:9090"
+        com.deda.autoscale.trigger.query: "vector(100)"
+        com.deda.autoscale.failsafe: "hold"
+
+  zero-worker:
+    image: alpine:3.22
+    command: ["sleep", "infinity"]
+    networks: [control]
+    deploy:
+      replicas: 1
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.min: "0"
+        com.deda.autoscale.max: "5"
+        com.deda.autoscale.targetPerReplica: "10"
+        com.deda.autoscale.activationThreshold: "1"
+        com.deda.autoscale.scaleToZeroGraceSeconds: "30"
+        com.deda.autoscale.cooldownSeconds: "0"
+        com.deda.autoscale.scaleDownDelaySeconds: "0"
+        com.deda.autoscale.stepDown: "0"
+        com.deda.autoscale.trigger.type: "prometheus"
+        com.deda.autoscale.trigger.url: "http://prometheus:9090"
+        com.deda.autoscale.trigger.query: "vector(0)"
+        com.deda.autoscale.failsafe: "hold"
+
+  rabbit-worker:
+    image: alpine:3.22
+    command: ["sleep", "infinity"]
+    networks: [control]
+    deploy:
+      replicas: 1
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.min: "1"
+        com.deda.autoscale.max: "10"
+        com.deda.autoscale.targetPerReplica: "10"
+        com.deda.autoscale.trigger.type: "rabbitmq"
+        com.deda.autoscale.trigger.url: "http://rabbitmq:15672"
+        com.deda.autoscale.trigger.queue: "qualification"
+        com.deda.autoscale.trigger.metric: "messages_ready"
+        com.deda.autoscale.trigger.credentialsRef: "qualification-rabbitmq"

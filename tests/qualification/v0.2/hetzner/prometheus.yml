@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+scrape_configs:
+  - job_name: deda
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: [tasks.deda]
+        type: A
+        port: 8080
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: [pushgateway:9091]
