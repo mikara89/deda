@@ -22,8 +22,7 @@ for provider in github azure gitlab; do
     set_state "$state"; wait_replicas "$service_name" 5; wait_running_tasks "$service_name" 5
     set_state "$clear"; wait_replicas "$service_name" 0; wait_running_tasks "$service_name" 0
     log_file="$SCENARIO_DIR/$provider-swarm-drain-$drain_run.log"
-    docker service logs --timestamps --raw "$(service "$service_name")" 2>&1 \
-      | awk -v since="$drain_started_at" '$1 >= since' > "$log_file" \
+    docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" > "$log_file" 2>&1 \
       || fail_scenario "could not collect $provider drain run $drain_run log"
     case "$provider" in
       github)

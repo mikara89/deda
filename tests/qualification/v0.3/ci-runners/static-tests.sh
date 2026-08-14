@@ -27,7 +27,7 @@ grep -Fq 'fastQualification' "$SCRIPT_DIR/collect-evidence.sh"
 grep -Fq 'refusing to replace an unrelated resource' "$SCRIPT_DIR/real/common.sh"
 grep -Fq 'real_stack_name' "$SCRIPT_DIR/real/common.sh"
 grep -Fq 'deda_ci_required_capacity' "$SCRIPT_DIR/real/common.sh"
-grep -Fq -- '--timestamps --raw' "$SCRIPT_DIR/scenarios/04-active-job-protection.sh"
+grep -Fq -- '--since "$drain_started_at" --raw' "$SCRIPT_DIR/scenarios/04-active-job-protection.sh"
 grep -Fq -- 'head_branch == $ref' "$SCRIPT_DIR/real/github.sh"
 if grep -Fq -- "grep -F 'deda-ado-'" "$SCRIPT_DIR/real/azure-pipelines.sh"; then
   echo 'Azure qualification must not pre-filter worker identities before validation' >&2
