@@ -155,14 +155,10 @@ capture_real_runner_hostnames() {
 }
 
 capture_gitlab_runner_names() {
-  local service_name=$1 slot task full_name short_name
-  while read -r slot task; do
-    [[ -n "$slot" && -n "$task" ]] || continue
-    full_name="deda-gitlab-${slot}-${task}"
-    short_name="deda-gitlab-${slot}-${task:0:12}"
-    printf '%s\n' "$full_name"
-    printf '%s\n' "$short_name"
-  done < <(docker service ps --no-trunc "$service_name" --filter desired-state=running --format '{{.Slot}} {{.ID}}')
+  local service_name=$1 host
+  while IFS= read -r host; do
+    [[ -n "$host" ]] && printf 'deda-gitlab-%s\n' "$host"
+  done < <(capture_real_runner_hostnames "$service_name")
 }
 
 assert_github_runner_attribution() {

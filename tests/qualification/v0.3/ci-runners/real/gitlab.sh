@@ -32,6 +32,8 @@ for id in "${pipeline_ids[@]}"; do
     pipeline=$(curl --fail --silent --show-error -H "PRIVATE-TOKEN: $token" "$base/pipelines/$id")
     jobs=$(curl --fail --silent --show-error -H "PRIVATE-TOKEN: $token" "$base/pipelines/$id/jobs?per_page=100")
     jq -n --argjson pipeline "$pipeline" --argjson jobs "$jobs" '{pipeline:{id:$pipeline.id,status:$pipeline.status,created_at:$pipeline.created_at,updated_at:$pipeline.updated_at},jobs:[$jobs[]?|{id,status,started_at,finished_at,runner:(.runner|{id,description,name})}]}' > "$file"
+    capture_gitlab_runner_names "$service_name" >> "$namesfile"
+    sort -u "$namesfile" -o "$namesfile"
     record_scale "$timeline" "$service_name" gitlab
     [[ $(jq -r .pipeline.status "$file") =~ ^(success|failed|canceled|skipped)$ ]] && break
     (( SECONDS < end )) || { write_real gitlab FAIL "Timed out waiting for pipeline $id."; exit 1; }; sleep 5

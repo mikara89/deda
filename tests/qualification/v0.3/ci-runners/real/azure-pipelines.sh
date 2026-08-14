@@ -33,6 +33,8 @@ for id in "${run_ids[@]}"; do
   while :; do
     curl --fail --silent --show-error -u ":$token" "$base/$id?api-version=7.1" | jq '{id,state,result,createdDate,finishedDate}' > "$file"
     curl --fail --silent --show-error -u ":$token" "$timeline_base/$id/timeline?api-version=7.1" | jq -r '.records[]?.workerName // ""' | grep -F 'deda-ado-' >> "$agents_file" || true
+    capture_real_runner_hostnames "$service_name" >> "$hostfile"
+    sort -u "$hostfile" -o "$hostfile"
     record_scale "$timeline" "$service_name" azure-pipelines
     [[ $(jq -r .state "$file") == completed ]] && break
     (( SECONDS < end )) || { write_real azure-pipelines FAIL "Timed out waiting for run $id."; exit 1; }

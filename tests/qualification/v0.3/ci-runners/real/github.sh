@@ -45,6 +45,8 @@ for id in "${run_ids[@]}"; do
     run=$(curl --fail --silent --show-error -H "Authorization: Bearer $token" -H 'Accept: application/vnd.github+json' "$api/repos/$GITHUB_QUAL_OWNER/$GITHUB_QUAL_REPOSITORY/actions/runs/$id")
     jobs=$(curl --fail --silent --show-error -H "Authorization: Bearer $token" -H 'Accept: application/vnd.github+json' "$api/repos/$GITHUB_QUAL_OWNER/$GITHUB_QUAL_REPOSITORY/actions/runs/$id/jobs?per_page=100")
     jq -n --argjson run "$run" --argjson jobs "$jobs" '{run:{id:$run.id,status:$run.status,conclusion:$run.conclusion,created_at:$run.created_at,updated_at:$run.updated_at},jobs:[$jobs.jobs[]?|{id,status,conclusion,started_at,completed_at,runner_name}]}' > "$run_file"
+    capture_real_runner_hostnames "$service_name" >> "$hostfile"
+    sort -u "$hostfile" -o "$hostfile"
     record_scale "$timeline" "$service_name" github
     [[ $(jq -r .run.status "$run_file") == completed ]] && break
     (( SECONDS < end )) || { write_real github FAIL "Timed out waiting for workflow run $id."; exit 1; }

@@ -12,12 +12,24 @@ configs:
     file: ./prometheus.yml
 
 secrets:
-  github_queue: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_github_queue }
-  azure_queue: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_azure_queue }
-  gitlab_queue: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_gitlab_queue }
-  github_runner: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_github_runner }
-  azure_runner: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_azure_runner }
-  gitlab_runner: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_gitlab_runner }
+  github_queue:
+    external: true
+    name: "${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_github_queue"
+  azure_queue:
+    external: true
+    name: "${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_azure_queue"
+  gitlab_queue:
+    external: true
+    name: "${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_gitlab_queue"
+  github_runner:
+    external: true
+    name: "${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_github_runner"
+  azure_runner:
+    external: true
+    name: "${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_azure_runner"
+  gitlab_runner:
+    external: true
+    name: "${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_gitlab_runner"
 
 services:
   docker-proxy:
