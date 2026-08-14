@@ -11,8 +11,15 @@ RESULTS_ROOT="$REPO_ROOT/tests/qualification/results"
 : "${DEDA_IMAGE:=deda:qualification}"
 : "${CI_SIMULATOR_IMAGE:=deda-ci-provider-simulator:qualification}"
 : "${CI_RUNNER_SIMULATOR_IMAGE:=deda-ci-runner-lifecycle-simulator:qualification}"
+: "${GITHUB_RUNNER_IMAGE:=$CI_RUNNER_SIMULATOR_IMAGE}"
+: "${AZURE_RUNNER_IMAGE:=$CI_RUNNER_SIMULATOR_IMAGE}"
+: "${GITLAB_RUNNER_IMAGE:=$CI_RUNNER_SIMULATOR_IMAGE}"
+: "${GITHUB_RUNNER_QUALIFICATION_IMAGE:=deda-github-runner-qualification:ci}"
+: "${AZURE_RUNNER_QUALIFICATION_IMAGE:=deda-azure-runner-qualification:ci}"
+: "${GITLAB_RUNNER_QUALIFICATION_IMAGE:=deda-gitlab-runner-qualification:ci}"
 [[ "$DEDA_QUAL_STACK" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo 'invalid DEDA_QUAL_STACK' >&2; exit 1; }
-export DEDA_QUAL_STACK QUAL_SECRET_PREFIX DEDA_IMAGE CI_SIMULATOR_IMAGE CI_RUNNER_SIMULATOR_IMAGE
+export DEDA_QUAL_STACK QUAL_SECRET_PREFIX DEDA_IMAGE CI_SIMULATOR_IMAGE CI_RUNNER_SIMULATOR_IMAGE GITHUB_RUNNER_IMAGE AZURE_RUNNER_IMAGE GITLAB_RUNNER_IMAGE
+export GITHUB_RUNNER_QUALIFICATION_IMAGE AZURE_RUNNER_QUALIFICATION_IMAGE GITLAB_RUNNER_QUALIFICATION_IMAGE
 
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -46,7 +53,11 @@ finish_scenario() {
 }
 
 capture_diagnostics() {
-  local dir=${1:-"$SCENARIO_DIR"}
+  capture_diagnostics_to "${SCENARIO_DIR:?SCENARIO_DIR is not set}"
+}
+
+capture_diagnostics_to() {
+  local dir=$1
   mkdir -p "$dir"
   docker node ls > "$dir/docker-node-ls.txt" 2>&1 || true
   docker service ls > "$dir/docker-service-ls.txt" 2>&1 || true
@@ -84,7 +95,7 @@ wait_replicas() {
 }
 wait_running_tasks() {
   local name=$1 expected=$2
-  wait_until "$(service "$name") running tasks=$expected" 90 bash -c "[[ \"\$(docker service ps '$(service "$name")' --filter desired-state=running --format '{{.CurrentState}}' 2>/dev/null | grep -c '^Running' || true)\" == '$expected' ]" || fail_scenario "timed out waiting for $(service "$name") running tasks=$expected"
+  wait_until "$(service "$name") running tasks=$expected" 180 bash -c "[[ \"\$(docker service ps '$(service "$name")' --filter desired-state=running --format '{{.CurrentState}}' 2>/dev/null | grep -c '^Running' || true)\" == '$expected' ]" || fail_scenario "timed out waiting for $(service "$name") running tasks=$expected"
 }
 
 simulator_url() { printf 'http://%s:8081' "$(service simulator)"; }
@@ -106,6 +117,20 @@ wait_for_all_provider_observations_after() {
 }
 redis_leader() { docker run --rm --network "${DEDA_QUAL_STACK}_control" redis:7-alpine redis-cli -h "$(service redis)" --raw GET deda-v03-qualification:leader 2>/dev/null || true; }
 
+deda_leader_task() {
+  local owner=$1 task host container
+  while IFS= read -r task; do
+    host=$(docker inspect --format '{{.Config.Hostname}}' "$task" 2>/dev/null || true)
+    if [[ "$owner" == "$host"* ]]; then
+      container=$(docker inspect --format '{{.Status.ContainerStatus.ContainerID}}' "$task" 2>/dev/null || true)
+      [[ -n "$container" ]] || return 1
+      printf '%s\n' "$container"
+      return 0
+    fi
+  done < <(docker service ps --no-trunc "$(service deda)" --filter desired-state=running --format '{{.ID}}')
+  return 1
+}
+
 prepare_stack() {
   require docker; require jq
   docker info >/dev/null || die 'Docker daemon is unavailable.'
@@ -123,7 +148,7 @@ prepare_stack() {
   local stack_dir="$SCRIPT_DIR/stack"
   sed -e "s/__GITHUB_SERVICE__/$(service github-runner)/g" -e "s/__AZURE_SERVICE__/$(service azure-runner)/g" -e "s/__GITLAB_SERVICE__/$(service gitlab-runner)/g" \
     "$stack_dir/credential-policy.json.tpl" > "$stack_dir/credential-policy.json"
-  for name in github_queue azure_queue gitlab_queue; do
+  for name in github_queue azure_queue gitlab_queue github_runner azure_runner gitlab_runner; do
     if ! docker secret inspect "${QUAL_SECRET_PREFIX}_${name}" >/dev/null 2>&1; then printf 'simulated-token' | docker secret create "${QUAL_SECRET_PREFIX}_${name}" - >/dev/null; fi
   done
   docker stack deploy --prune -c "$stack_dir/stack.yml" "$DEDA_QUAL_STACK" >/dev/null
@@ -143,9 +168,22 @@ ensure_runner_images() {
   fi
 }
 
+ensure_runner_qualification_images() {
+  ensure_runner_images
+  if ! docker image inspect "$GITHUB_RUNNER_QUALIFICATION_IMAGE" >/dev/null 2>&1; then
+    docker build -f "$SCRIPT_DIR/simulator/real-runner/github.Dockerfile" --build-arg BASE_IMAGE=deda-github-runner:ci -t "$GITHUB_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
+  fi
+  if ! docker image inspect "$AZURE_RUNNER_QUALIFICATION_IMAGE" >/dev/null 2>&1; then
+    docker build -f "$SCRIPT_DIR/simulator/real-runner/azure.Dockerfile" --build-arg BASE_IMAGE=deda-azure-runner:ci -t "$AZURE_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
+  fi
+  if ! docker image inspect "$GITLAB_RUNNER_QUALIFICATION_IMAGE" >/dev/null 2>&1; then
+    docker build -f "$SCRIPT_DIR/simulator/real-runner/gitlab.Dockerfile" --build-arg BASE_IMAGE=deda-gitlab-runner:ci -t "$GITLAB_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
+  fi
+}
+
 cleanup_stack() {
   docker stack rm "$DEDA_QUAL_STACK" >/dev/null 2>&1 || true
   wait_until "stack $DEDA_QUAL_STACK removal" 90 bash -c "! docker stack ls --format '{{.Name}}' | grep -Fxq '$DEDA_QUAL_STACK'" || note "stack removal did not finish before cleanup"
-  for name in github_queue azure_queue gitlab_queue; do docker secret rm "${QUAL_SECRET_PREFIX}_${name}" >/dev/null 2>&1 || true; done
+  for name in github_queue azure_queue gitlab_queue github_runner azure_runner gitlab_runner; do docker secret rm "${QUAL_SECRET_PREFIX}_${name}" >/dev/null 2>&1 || true; done
   rm -f "$SCRIPT_DIR/stack/credential-policy.json"
 }

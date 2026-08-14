@@ -18,9 +18,22 @@ for provider in github azure gitlab; do
     gitlab) state='{"gitlab":{"jobs":[{"status":"running","tag_list":["linux","deda"]},{"status":"running","tag_list":["linux","deda"]},{"status":"running","tag_list":["linux","deda"]},{"status":"running","tag_list":["linux","deda"]},{"status":"running","tag_list":["linux","deda"]}]}}'; clear='{"gitlab":{"jobs":[]}}' ;;
   esac
   set_state "$state"; wait_replicas "$service_name" 5; wait_running_tasks "$service_name" 5
-  set_state "$clear"; wait_replicas "$service_name" 0
+  set_state "$clear"; wait_replicas "$service_name" 0; wait_running_tasks "$service_name" 0
   docker service logs --raw "$(service "$service_name")" > "$SCENARIO_DIR/$provider-swarm-drain.log" 2>&1 || fail_scenario "could not collect $provider drain log"
-  grep -Fq 'completed-after-drain' "$SCENARIO_DIR/$provider-swarm-drain.log" || fail_scenario "$provider active lifecycle task did not drain gracefully"
+  case "$provider" in
+    github)
+      grep -Fq 'preserving the active ephemeral job' "$SCENARIO_DIR/$provider-swarm-drain.log" || fail_scenario 'GitHub busy-hook protection did not engage'
+      grep -Fq 'runner exited during drain' "$SCENARIO_DIR/$provider-swarm-drain.log" || fail_scenario 'GitHub runner did not finish during drain'
+      ;;
+    azure)
+      grep -Fq 'one-job agent exited during drain' "$SCENARIO_DIR/$provider-swarm-drain.log" || fail_scenario 'Azure one-job agent did not finish during drain'
+      ;;
+    gitlab)
+      grep -Fq 'completed-after-drain' "$SCENARIO_DIR/$provider-swarm-drain.log" || fail_scenario 'GitLab runner did not complete after SIGQUIT drain'
+      ;;
+  esac
 done
-grep -R -F 'cancelled' "$SCENARIO_DIR" >/dev/null && fail_scenario 'a busy GitHub job was cancelled' || true
-finish_scenario PASS 'five wrapper iterations and real Swarm 5→0 drains passed for GitHub TERM/busy hook, Azure --once, and GitLab SIGQUIT'
+if grep -R -F 'cancelled' "$SCENARIO_DIR" >/dev/null; then
+  fail_scenario 'an active CI job was cancelled'
+fi
+finish_scenario PASS 'five wrapper iterations and real PR10 wrappers in Swarm 5→0 drains passed for GitHub busy hook, Azure --once, and GitLab SIGQUIT'

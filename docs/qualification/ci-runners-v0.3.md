@@ -13,6 +13,9 @@ stateful provider simulator and a real Docker Swarm deployment of DEDA, Redis
 HA, socket proxy, and runner test services. It covers capacity and compatibility
 matching, scale from/to zero, provider failure hold behavior, cache expiry and
 invalidation, Redis failover, lifecycle cleanup, and credential policy cases.
+Full mode replaces the generic sleep simulator with qualification images
+derived from the real PR10 runner images; Swarm signals the actual runner
+entrypoint while fake provider binaries keep the API interaction deterministic.
 It records bounded, sanitized evidence below
 `tests/qualification/results/<RUN_ID>/v0.3-ci/`.
 
@@ -27,7 +30,11 @@ targets, and file paths for queue and runner registration credentials. It never
 creates random SaaS resources or deletes the supplied project, repository, or
 pool. The harness polls the submitted workflow/pipeline job conclusions and
 retains sanitized IDs, timestamps, statuses, and runner/task identifiers; a
-successful dispatch alone is not evidence of a PASS.
+successful dispatch alone is not evidence of a PASS. Each real-provider harness
+also deploys a dedicated Swarm stack with the runner registration file,
+verifies the DEDA-managed runner service starts at zero, observes `0 → N`,
+captures running tasks while provider jobs are active, and then verifies the
+service drains back to zero.
 
 ## Runner lifecycle and safety
 

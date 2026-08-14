@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/common.sh"
-begin_scenario 06 'Observation cache, single-flight, and config invalidation'
+begin_scenario 06 'Observation cache and config invalidation'
 
 # Cache scope is a controller process. Temporarily use one DEDA replica so the
 # simulator counter has one unambiguous observer.

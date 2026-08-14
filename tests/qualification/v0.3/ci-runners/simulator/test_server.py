@@ -56,5 +56,10 @@ class SimulatorTests(unittest.TestCase):
         with self.assertRaises(json.JSONDecodeError):
             self.request("/api/v4/projects/group%2Frepo/jobs?page=1")
 
+    def test_status_200_body_overrides_normal_provider_response(self):
+        self.state({"reset": True, "mode": {"status": 200, "body": "not-a-provider-document"}})
+        _, body = self.request("/api/v4/projects/group%2Frepo/jobs?page=1")
+        self.assertEqual(body, "not-a-provider-document")
+
 if __name__ == "__main__":
     unittest.main()

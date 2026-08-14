@@ -18,3 +18,9 @@ have supplied PASS evidence.
 The simulator records endpoint, timestamp, response mode, and bounded request
 counts. It never records authorization headers. Qualification secrets are
 short-lived Docker secrets and are excluded from result files.
+
+Full deterministic mode uses qualification images derived from the real PR10
+runner images. The fake provider binaries keep the API interaction
+deterministic while Swarm still signals the actual GitHub, Azure, and GitLab
+runner entrypoints, so active-job protection is exercised under the same
+wrapper/PID1 path used by the release images.

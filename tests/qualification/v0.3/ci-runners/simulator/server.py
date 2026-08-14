@@ -67,8 +67,11 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return True
+        if mode.get("body") is not None:
+            self.json(mode["status"], mode["body"])
+            return True
         if mode["status"] != 200:
-            self.json(mode["status"], mode["body"] if mode["body"] is not None else {"error": "simulated provider failure"})
+            self.json(mode["status"], {"error": "simulated provider failure"})
             return True
         return False
 

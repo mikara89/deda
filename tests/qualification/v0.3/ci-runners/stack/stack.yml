@@ -15,6 +15,9 @@ secrets:
   github_queue: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_github_queue }
   azure_queue: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_azure_queue }
   gitlab_queue: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_gitlab_queue }
+  github_runner: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_github_runner }
+  azure_runner: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_azure_runner }
+  gitlab_runner: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_gitlab_runner }
 
 services:
   docker-proxy:
@@ -49,9 +52,16 @@ services:
       replicas: 2
       placement: { constraints: [node.role == manager] }
   github-runner:
-    image: ${CI_RUNNER_SIMULATOR_IMAGE:?CI_RUNNER_SIMULATOR_IMAGE_required}
+    image: ${GITHUB_RUNNER_IMAGE:-deda-ci-runner-lifecycle-simulator:qualification}
     networks: [control]
-    environment: { SIMULATED_PROVIDER: github, SIMULATED_JOB_SECONDS: "12" }
+    secrets: [{ source: github_runner, target: github-runner-admin, uid: "0", gid: "0", mode: 0400 }]
+    environment:
+      SIMULATED_PROVIDER: github
+      SIMULATED_JOB_SECONDS: "30"
+      GITHUB_OWNER: qualification
+      GITHUB_RUNNER_SCOPE: org
+      GITHUB_RUNNER_LABELS: self-hosted,linux,deda
+      GITHUB_RUNNER_TEST_NO_PRIVDROP: "1"
     stop_grace_period: 90s
     deploy:
       replicas: 0
@@ -72,9 +82,17 @@ services:
         com.deda.autoscale.trigger.credentialsRef: "github-queue"
         com.deda.autoscale.trigger.refreshSeconds: "1"
   azure-runner:
-    image: ${CI_RUNNER_SIMULATOR_IMAGE:?CI_RUNNER_SIMULATOR_IMAGE_required}
+    image: ${AZURE_RUNNER_IMAGE:-deda-ci-runner-lifecycle-simulator:qualification}
     networks: [control]
-    environment: { SIMULATED_PROVIDER: azure, SIMULATED_JOB_SECONDS: "12" }
+    secrets: [{ source: azure_runner, target: ado-agent-registration, uid: "0", gid: "0", mode: 0400 }]
+    environment:
+      SIMULATED_PROVIDER: azure
+      SIMULATED_JOB_SECONDS: "45"
+      AZP_URL: http://simulator:8081
+      AZP_POOL: deda
+      AZP_AGENT_TEST_NO_PRIVDROP: "1"
+      AZP_CLEANUP_RETRIES: "120"
+      AZP_CLEANUP_DELAY_SECONDS: "1"
     stop_grace_period: 90s
     deploy:
       replicas: 0
@@ -114,9 +132,13 @@ services:
         com.deda.autoscale.trigger.credentialsRef: "unknown-credential"
         com.deda.autoscale.trigger.refreshSeconds: "1"
   gitlab-runner:
-    image: ${CI_RUNNER_SIMULATOR_IMAGE:?CI_RUNNER_SIMULATOR_IMAGE_required}
+    image: ${GITLAB_RUNNER_IMAGE:-deda-ci-runner-lifecycle-simulator:qualification}
     networks: [control]
-    environment: { SIMULATED_PROVIDER: gitlab, SIMULATED_JOB_SECONDS: "12" }
+    secrets: [{ source: gitlab_runner, target: gitlab-runner-auth, uid: "0", gid: "0", mode: 0400 }]
+    environment:
+      SIMULATED_PROVIDER: gitlab
+      SIMULATED_JOB_SECONDS: "60"
+      CI_SERVER_URL: http://simulator:8081
     stop_signal: SIGQUIT
     stop_grace_period: 90s
     deploy:

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT=$(cd "$SCRIPT_DIR/../../../.." && pwd)
 for command in bash python3 jq; do command -v "$command" >/dev/null 2>&1 || { echo "missing $command" >&2; exit 1; }; done
 find "$SCRIPT_DIR" -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+for script in github-curl github-jq gitlab-runner; do
+  sh -n "$SCRIPT_DIR/simulator/real-runner/$script"
+done
 python3 -m py_compile "$SCRIPT_DIR/simulator/server.py"
 python3 "$SCRIPT_DIR/simulator/test_server.py"
 grep -Fq 'completed-after-drain' "$SCRIPT_DIR/simulator/runner.sh"

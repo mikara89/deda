@@ -2,7 +2,7 @@
 set -eu
 duration=${SIMULATED_JOB_SECONDS:-12}
 provider=${SIMULATED_PROVIDER:-unknown}
-job="${HOSTNAME:-task}"
+job=$(hostname 2>/dev/null || uname -n 2>/dev/null || echo task)
 printf 'job=%s provider=%s event=started at=%s\n' "$job" "$provider" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 sleep "$duration" & child=$!
 drain() {

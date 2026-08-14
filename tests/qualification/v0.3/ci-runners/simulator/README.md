@@ -13,3 +13,8 @@ curl -fsS -X POST http://simulator:8081/__admin/state \
   -H 'content-type: application/json' \
   -d '{"github":{"jobs":[{"status":"queued","labels":["self-hosted","linux","deda"]}]}}'
 ```
+
+`real-runner/` contains qualification-only variants built on top of the real PR10
+GitHub, Azure, and GitLab runner images. Their fake provider binaries replace
+the network/API surface, but the real entrypoint remains PID 1 and receives the
+same Swarm shutdown signals as the release images.
