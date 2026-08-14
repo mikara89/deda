@@ -5,6 +5,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Deda.Credentials\Deda.Credentials.csproj" />
     <ProjectReference Include="..\Deda.Core\Deda.Core.csproj" />
     <ProjectReference Include="..\Deda.Triggers.Abstractions\Deda.Triggers.Abstractions.csproj" />
   </ItemGroup>

@@ -25,7 +25,7 @@ All names below use the `com.deda.autoscale.` prefix.
 | `stepUp` | Integer | `10` | At least `0` | Maximum replicas added per reconciliation. `"0"` means unlimited. | A small value slows response to bursts. |
 | `stepDown` | Integer | `5` | At least `0` | Maximum replicas removed per reconciliation. `"0"` means unlimited. | A small value provides a gradual drain. |
 | `failsafe` | String | `hold` | `hold`, `min`, or `max` | Chooses the target when metric retrieval or validation fails, for example `"max"`. Explicit invalid values are configuration errors. | See [fail-safe modes](#fail-safe-modes). |
-| `trigger.type` | String | None | `rabbitmq`, `prometheus`, or `http` | Selects the adapter, for example `"rabbitmq"`. | Missing or unknown types are logged as service errors. |
+| `trigger.type` | String | None | `rabbitmq`, `prometheus`, `http`, `github-actions`, `azure-pipelines`, or `gitlab-ci` | Selects the adapter, for example `"github-actions"`. | Missing or unknown types are logged as service errors. |
 | `trigger.*` | String | Trigger-specific | See trigger guide | Supplies settings such as `trigger.timeoutSeconds: "5"`. | Labels are visible through the Docker API; never place passwords in them. |
 | `pollSeconds` | Integer | Ignored | Ignored | A value such as `"30"` has no effect; this is a deprecated compatibility label. | `DEDA_POLL_SECONDS` is the only reconciliation interval. |
 
@@ -40,6 +40,9 @@ does not autoscale that service.
 | RabbitMQ | `trigger.type=rabbitmq`, `trigger.url`, `trigger.queue` | `trigger.vhost`, `trigger.metric`, `trigger.timeoutSeconds`, `trigger.credentialsRef` |
 | Prometheus | `trigger.type=prometheus`, `trigger.url`, `trigger.query` | `trigger.timeoutSeconds` |
 | HTTP | `trigger.type=http`, `trigger.url` | `trigger.timeoutSeconds`, `trigger.valuePath` |
+| GitHub Actions | `trigger.type=github-actions`, `trigger.owner`, `trigger.repos`, `trigger.labels`, `trigger.credentialsRef` | `trigger.apiUrl`, `trigger.refreshSeconds` |
+| Azure Pipelines | `trigger.type=azure-pipelines`, `trigger.organizationUrl`, `trigger.poolId` or `trigger.poolName`, `trigger.credentialsRef` | `trigger.demands`, `trigger.refreshSeconds` |
+| GitLab CI | `trigger.type=gitlab-ci`, `trigger.projects`, `trigger.credentialsRef` | `trigger.url`, `trigger.tags`, `trigger.runUntagged`, `trigger.refreshSeconds` |
 
 See the [RabbitMQ](triggers/rabbitmq.md), [Prometheus](triggers/prometheus.md),
 and [HTTP](triggers/http.md) references for exact response semantics.
@@ -73,7 +76,7 @@ missing or unparsable values use the default.
 | `DEDA_LOG_DECISIONS` | `true` | Boolean | Retained host option. Decisions are currently logged through structured telemetry. |
 | `DEDA_HTTP_PORT` | `8080` | `1`–`65535` | Port for health and Prometheus endpoints. |
 | `DEDA_SECRETS_DIRECTORY` | `/run/secrets` | Non-empty path | Directory for named per-service credential secrets. |
-| `DEDA_CREDENTIAL_POLICY_FILE` | Disabled | Readable JSON file | Operator-owned RabbitMQ credential bindings used by `trigger.credentialsRef`. |
+| `DEDA_CREDENTIAL_POLICY_FILE` | Disabled | Readable JSON file | Operator-owned credential bindings used by `trigger.credentialsRef`. |
 | `DEDA_ALLOW_LEGACY_CREDENTIALS_SECRET` | `false` | Boolean | Temporarily enables legacy label-selected `trigger.credentialsSecret`; use only for trusted-cluster migration. |
 | `DEDA_MAX_CONCURRENT_SERVICES` | `8` | `1`–`256` | Maximum simultaneous service evaluations in one reconciliation cycle. |
 | `DEDA_RECONCILE_TIMEOUT_SECONDS` | `120` | `1`–`3600` seconds | Maximum duration of one reconciliation cycle. |

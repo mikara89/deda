@@ -8,7 +8,7 @@ discovers replicated services that opt in through labels, reads one external
 workload metric, and updates the service replica count.
 
 Use DEDA when a Swarm workload should scale from queue depth, a Prometheus
-query, or a small HTTP metric endpoint without moving the workload to
+query, a small HTTP metric endpoint, or a self-hosted CI runner queue without moving the workload to
 Kubernetes.
 
 > **Project status:** pre-1.0 release-candidate development. DEDA includes
@@ -18,7 +18,7 @@ Kubernetes.
 ## Highlights
 
 - Docker Swarm-native, label-driven autoscaling
-- RabbitMQ, Prometheus, and HTTP triggers
+- RabbitMQ, Prometheus, HTTP, GitHub Actions, Azure Pipelines, and GitLab CI triggers
 - Scale-to-zero grace, scale-down stabilization, cooldown, and step limits
 - Prometheus/OpenTelemetry metrics, structured logs, traces, and health checks
 - Optional active/standby operation with a Redis TTL lease
@@ -29,7 +29,7 @@ Kubernetes.
 flowchart LR
     Service[Replicated Swarm service<br/>with DEDA labels]
     DEDA[DEDA]
-    Sources[ RabbitMQ / Prometheus / HTTP ]
+    Sources[ RabbitMQ / Prometheus / HTTP / CI ]
     Docker[Docker Swarm manager API]
 
     DEDA --> Sources
@@ -92,6 +92,7 @@ verification, service evaluation, and next steps.
 | RabbitMQ | Queue properties from the Management HTTP API | Queue consumers and task workers | [RabbitMQ](docs/triggers/rabbitmq.md) |
 | Prometheus | One scalar or exactly one instant-vector series | Application/exporter metrics and rates | [Prometheus](docs/triggers/prometheus.md) |
 | HTTP | One number from a GET response or JSON path | Small application-specific metric endpoints | [HTTP](docs/triggers/http.md) |
+| CI runners | Compatible queued plus active jobs | GitHub Actions, Azure Pipelines, and GitLab runners | [CI runners](docs/triggers/ci-runners.md) |
 
 Successful values must be finite and non-negative. Empty Prometheus vectors
 represent zero; ambiguous multi-series vectors are rejected. Trigger failures

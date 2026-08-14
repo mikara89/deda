@@ -1,4 +1,5 @@
 using Deda.Config.Labels;
+using Deda.Credentials;
 using Deda.Controller;
 using Deda.Core;
 using Deda.Host;
@@ -7,6 +8,7 @@ using Deda.Observability;
 using Deda.Policies;
 using Deda.Swarm;
 using Deda.Triggers.Abstractions;
+using Deda.Triggers.Ci;
 using Deda.Triggers.Http;
 using Deda.Triggers.Prometheus;
 using Deda.Triggers.RabbitMq;
@@ -34,6 +36,7 @@ builder.Services
     {
         metrics
             .AddMeter(DedaDiagnostics.SourceName)
+            .AddMeter(CiDiagnostics.SourceName)
             .AddPrometheusExporter();
         if (otlpEnabled)
             metrics.AddOtlpExporter();
@@ -91,9 +94,9 @@ if (opts.RedisConnectionString is not null)
 builder.Services.AddHttpClient("rabbitmq", client =>
     client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
 builder.Services.AddSingleton<ISecretResolver>(new DockerSecretFileResolver(opts.SecretsDirectory));
-builder.Services.AddSingleton(RabbitMqCredentialPolicy.FromJsonFile(opts.CredentialPolicyFile));
+builder.Services.AddSingleton(CredentialPolicy.FromJsonFile(opts.CredentialPolicyFile));
 builder.Services.AddSingleton<IRabbitMqCredentialsProvider>(sp => new EnvOrFileRabbitMqCredentialsProvider(
-    sp.GetRequiredService<ISecretResolver>(), sp.GetRequiredService<RabbitMqCredentialPolicy>(), opts.AllowLegacyCredentialsSecret));
+    sp.GetRequiredService<ISecretResolver>(), sp.GetRequiredService<CredentialPolicy>(), opts.AllowLegacyCredentialsSecret));
 builder.Services.AddSingleton<ITriggerAdapter, RabbitMqTriggerAdapter>();
 
 builder.Services.AddHttpClient("prometheus", client =>
@@ -102,6 +105,18 @@ builder.Services.AddSingleton<ITriggerAdapter, PrometheusTriggerAdapter>();
 builder.Services.AddHttpClient("http", client =>
     client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
 builder.Services.AddSingleton<ITriggerAdapter, HttpTriggerAdapter>();
+builder.Services.AddHttpClient("github-actions", client => client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
+builder.Services.AddHttpClient("azure-pipelines", client => client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
+builder.Services.AddHttpClient("gitlab-ci", client => client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
+builder.Services.AddSingleton<CredentialTokenProvider>();
+builder.Services.AddSingleton<CiObservationCache>();
+builder.Services.AddSingleton<IServiceLifecycleObserver, CiTelemetryLifecycle>();
+builder.Services.AddSingleton<GitHubActionsQueueProvider>();
+builder.Services.AddSingleton<AzurePipelinesQueueProvider>();
+builder.Services.AddSingleton<GitLabCiQueueProvider>();
+builder.Services.AddSingleton<ITriggerAdapter, GitHubActionsTriggerAdapter>();
+builder.Services.AddSingleton<ITriggerAdapter, AzurePipelinesTriggerAdapter>();
+builder.Services.AddSingleton<ITriggerAdapter, GitLabCiTriggerAdapter>();
 builder.Services.AddSingleton<ITriggerAdapterRegistry>(sp =>
     new TriggerAdapterRegistry(sp.GetServices<ITriggerAdapter>()));
 

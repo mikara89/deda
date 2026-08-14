@@ -170,6 +170,27 @@ public sealed class AutoscalerControllerTests
         await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
 
         Assert.Contains((original.ServiceId, "worker-v1"), fixture.Telemetry.RemovedServices);
+        Assert.Contains((original.ServiceId, "worker-v1"), fixture.Lifecycle.RemovedServices);
+    }
+
+    [Fact]
+    public async Task Reconcile_TriggerTypeChangeReplacesIncompatibleScaleState()
+    {
+        var fixture = new Fixture();
+        var service = Service("worker");
+        fixture.Swarm.Services = [service];
+        fixture.Registry.Adapter = new FakeAdapter((_, _, _) => Task.FromResult(TriggerResult.Ok(0)));
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+        var previous = fixture.StateStore.GetOrAdd(service.ServiceId);
+        previous.LastAppliedReplicas = 19;
+
+        fixture.Config.Config = ValidConfig() with { TriggerType = "second" };
+        fixture.Registry.Adapter = new FakeAdapter((_, _, _) => Task.FromResult(TriggerResult.Ok(0)), "second");
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        var replacement = fixture.StateStore.GetOrAdd(service.ServiceId);
+        Assert.NotSame(previous, replacement);
+        Assert.Contains(service.ServiceId, fixture.StateStore.RemovedKeys);
     }
 
     [Fact]
@@ -323,6 +344,7 @@ public sealed class AutoscalerControllerTests
         public FakePolicy Policy { get; } = new();
         public FakeStateStore StateStore { get; } = new();
         public RecordingTelemetry Telemetry { get; } = new();
+        public RecordingLifecycle Lifecycle { get; } = new();
         public RecordingUpdateStrategy Updates { get; } = new();
         public AutoscalerController Controller { get; }
 
@@ -337,7 +359,8 @@ public sealed class AutoscalerControllerTests
                 Telemetry,
                 Updates,
                 hostOptions ?? new HostOptions(10, 0, false),
-                leader);
+                leader,
+                [Lifecycle]);
         }
     }
 
@@ -428,12 +451,13 @@ public sealed class AutoscalerControllerTests
     {
         private readonly Func<ServiceRef, ScaleConfig, CancellationToken, Task<TriggerResult>> _handler;
 
-        public FakeAdapter(Func<ServiceRef, ScaleConfig, CancellationToken, Task<TriggerResult>> handler)
+        public FakeAdapter(Func<ServiceRef, ScaleConfig, CancellationToken, Task<TriggerResult>> handler, string type = "fake")
         {
             _handler = handler;
+            Type = type;
         }
 
-        public string Type => "fake";
+        public string Type { get; }
 
         public int CallCount { get; private set; }
 
@@ -470,6 +494,7 @@ public sealed class AutoscalerControllerTests
     private sealed class FakeStateStore : IStateStore<string, ServiceScaleState>
     {
         private readonly Dictionary<string, ServiceScaleState> _states = [];
+        public List<string> RemovedKeys { get; } = [];
 
         public ServiceScaleState GetOrAdd(string key)
         {
@@ -482,7 +507,11 @@ public sealed class AutoscalerControllerTests
             return state;
         }
 
-        public void Remove(string key) => _states.Remove(key);
+        public void Remove(string key)
+        {
+            RemovedKeys.Add(key);
+            _states.Remove(key);
+        }
     }
 
     private sealed class RecordingTelemetry : IAutoscalerTelemetry
@@ -498,6 +527,12 @@ public sealed class AutoscalerControllerTests
 
         public void RemoveService(string serviceId, string serviceName) =>
             RemovedServices.Add((serviceId, serviceName));
+    }
+
+    private sealed class RecordingLifecycle : IServiceLifecycleObserver
+    {
+        public List<(string ServiceId, string ServiceName)> RemovedServices { get; } = [];
+        public void RemoveService(string serviceId, string serviceName) => RemovedServices.Add((serviceId, serviceName));
     }
 
     private sealed class RecordingUpdateStrategy : IServiceUpdateStrategy

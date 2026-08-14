@@ -13,6 +13,7 @@ deeper only when needed.
 - [RabbitMQ trigger](triggers/rabbitmq.md)
 - [Prometheus trigger](triggers/prometheus.md)
 - [HTTP trigger](triggers/http.md)
+- [CI runner triggers](triggers/ci-runners.md)
 - [Scaling and scale-to-zero](scaling.md)
 - [Observability](observability.md)
 - [Optional Redis high availability](high-availability.md)
