@@ -27,10 +27,12 @@ for provider in github azure gitlab; do
       sleep 1
     done
     (( started_jobs >= 5 )) || fail_scenario "$provider drain run $drain_run did not start all five active jobs before downscale"
-    set_state "$clear"; wait_replicas "$service_name" 0; wait_running_tasks "$service_name" 0
     log_file="$SCENARIO_DIR/$provider-swarm-drain-$drain_run.log"
+    set_state "$clear"; wait_replicas "$service_name" 0
+    sleep 5
     docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" > "$log_file" 2>&1 \
       || fail_scenario "could not collect $provider drain run $drain_run log"
+    wait_running_tasks "$service_name" 0
     case "$provider" in
       github)
         if ! grep -Fq 'preserving the active ephemeral job' "$log_file"; then
