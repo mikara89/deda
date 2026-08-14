@@ -111,6 +111,7 @@ DEDA documentation has a quick start, task-oriented guides, and full reference:
 - [Production deployment](docs/production.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Runnable examples](examples/README.md)
+- [Autoscaled self-hosted CI runner examples](examples/ci-runners/README.md)
 - [Docker CLI plugin](src/tools/Docker.Deda.Cli/README.md)
 - [Architecture decisions](docs/adr/README.md)
 

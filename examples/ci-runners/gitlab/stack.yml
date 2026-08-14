@@ -1,0 +1,49 @@
+version: "3.8"
+networks: { deda_net: { driver: overlay } }
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    networks: [deda_net]
+    environment: { SERVICES: "1", TASKS: "1", NODES: "1", SWARM: "1", VERSION: "1", POST: "1" }
+    deploy: { placement: { constraints: [node.role == manager] } }
+  deda:
+    image: ${DEDA_IMAGE:-ghcr.io/mikara89/deda:v0.3.0}
+    networks: [deda_net]
+    environment: { DOCKER_HOST: "http://docker-proxy:2375", DEDA_POLL_SECONDS: "10", DEDA_SECRETS_DIRECTORY: "/run/secrets", DEDA_CREDENTIAL_POLICY_FILE: "/run/deda/credential-policy.json" }
+    secrets: [gitlab-queue-reader]
+    configs: [{ source: deda-credential-policy, target: /run/deda/credential-policy.json }]
+    deploy: { placement: { constraints: [node.role == manager] } }
+  gitlab-runner:
+    image: ${GITLAB_RUNNER_IMAGE:-ghcr.io/mikara89/deda-gitlab-runner:v0.3.0}
+    networks: [deda_net]
+    environment: { CI_SERVER_URL: "https://gitlab.com", GITLAB_RUNNER_NAME: "deda-gitlab-{{.Task.Slot}}-{{.Task.ID}}" }
+    secrets: [{ source: gitlab-runner-auth, target: gitlab-runner-auth, uid: "0", gid: "0", mode: 0400 }]
+    stop_signal: SIGQUIT
+    stop_grace_period: 30m
+    deploy:
+      replicas: 0
+      restart_policy: { condition: any, delay: 10s }
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.min: "0"
+        com.deda.autoscale.max: "10"
+        com.deda.autoscale.targetPerReplica: "1"
+        com.deda.autoscale.activationThreshold: "0"
+        com.deda.autoscale.scaleToZeroGraceSeconds: "60"
+        com.deda.autoscale.cooldownSeconds: "60"
+        com.deda.autoscale.scaleDownDelaySeconds: "300"
+        com.deda.autoscale.stepDown: "1"
+        com.deda.autoscale.failsafe: "hold"
+        com.deda.autoscale.trigger.type: "gitlab-ci"
+        com.deda.autoscale.trigger.url: "https://gitlab.com"
+        com.deda.autoscale.trigger.projects: "example-group/api,example-group/web"
+        com.deda.autoscale.trigger.tags: "linux,deda"
+        com.deda.autoscale.trigger.runUntagged: "false"
+        com.deda.autoscale.trigger.credentialsRef: "gitlab-queue-reader"
+        com.deda.autoscale.trigger.refreshSeconds: "15"
+secrets:
+  gitlab-queue-reader: { external: true }
+  gitlab-runner-auth: { external: true }
+configs:
+  deda-credential-policy: { file: ./credential-policy.example.json }

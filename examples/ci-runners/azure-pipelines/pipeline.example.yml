@@ -1,0 +1,12 @@
+trigger: none
+pool:
+  name: deda-swarm
+  demands:
+  - Agent.OS -equals Linux
+  - deda
+steps:
+- bash: |
+    echo "runner is intentionally socketless"
+    sleep 90
+    uname -a
+  displayName: visible autoscaling job

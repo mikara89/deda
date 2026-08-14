@@ -1,0 +1,6 @@
+smoke-on-autoscaled-runner:
+  tags: [linux, deda]
+  script:
+    - echo "runner is intentionally socketless"
+    - sleep 90
+    - uname -a

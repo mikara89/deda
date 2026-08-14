@@ -8,6 +8,10 @@ Use `targetPerReplica: "1"` when each runner executes one job concurrently.
 The runner image remains responsible for runner registration, deregistration,
 job lifecycle, and cleanup; DEDA only owns the Swarm service replica count.
 
+Production-oriented Swarm references, including separate observer and runner
+credentials plus bounded drain behavior, are in the
+[CI runner examples](../../examples/ci-runners/README.md).
+
 ## Credentials
 
 Mount the provider token as a Docker secret into DEDA and define an
