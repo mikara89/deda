@@ -14,6 +14,7 @@ expected behavior, verification, cleanup, and links to canonical documentation.
 | [Redis HA](ha-redis/README.md) | Two DEDA replicas with leader/standby behavior | DEDA 8083 |
 | [Observability](observability/README.md) | Prometheus scraping DEDA health/reconcile metrics | DEDA 8084, Prometheus 9091 |
 | [Order processing](order-processing/README.md) | Queue worker, per-service credentials, stabilization, and metrics | DEDA 8085, Prometheus 9092, RabbitMQ 15675 |
+| [Autoscaled CI runners](ci-runners/README.md) | GitHub Actions, Azure Pipelines, and GitLab runner lifecycle references | None |
 
 ## Common prerequisites
 

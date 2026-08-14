@@ -14,6 +14,7 @@ deeper only when needed.
 - [Prometheus trigger](triggers/prometheus.md)
 - [HTTP trigger](triggers/http.md)
 - [CI runner triggers](triggers/ci-runners.md)
+- [Autoscaled CI runner deployments](../examples/ci-runners/README.md)
 - [Scaling and scale-to-zero](scaling.md)
 - [Observability](observability.md)
 - [Optional Redis high availability](high-availability.md)

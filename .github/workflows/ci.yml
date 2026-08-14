@@ -117,7 +117,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate every example stack
-        run: bash tests/examples/validate-stacks.sh
+        run: |
+          bash tests/examples/validate-stacks.sh
+          bash tests/ci-runners/lifecycle-tests.sh
       - name: Validate qualification harness (no cloud access)
         run: |
           find tests/qualification/v0.2/hetzner -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n

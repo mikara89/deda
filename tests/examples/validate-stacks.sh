@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 
-mapfile -t stacks < <(find "$REPO_ROOT/examples" -mindepth 2 -maxdepth 2 -name stack.yml -print | sort)
+mapfile -t stacks < <(find "$REPO_ROOT/examples" -mindepth 2 -maxdepth 3 -name stack.yml -print | sort)
 test "${#stacks[@]}" -gt 0
 
 for stack in "${stacks[@]}"; do

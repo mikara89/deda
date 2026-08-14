@@ -1,0 +1,7 @@
+name: autoscaled-runner-smoke
+on: workflow_dispatch
+jobs:
+  visible-scale-event:
+    runs-on: [self-hosted, linux, deda]
+    steps:
+      - run: echo "runner is intentionally socketless"; sleep 90; uname -a
