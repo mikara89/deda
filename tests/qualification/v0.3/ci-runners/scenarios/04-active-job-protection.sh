@@ -20,6 +20,13 @@ for provider in github azure gitlab; do
   for drain_run in $(seq 1 3); do
     drain_started_at=$(utc_now)
     set_state "$state"; wait_replicas "$service_name" 5; wait_running_tasks "$service_name" 5
+    started_jobs=0
+    for _ in $(seq 1 90); do
+      started_jobs=$(docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" 2>/dev/null | grep -c "provider=$provider event=started" || true)
+      (( started_jobs >= 5 )) && break
+      sleep 1
+    done
+    (( started_jobs >= 5 )) || fail_scenario "$provider drain run $drain_run did not start all five active jobs before downscale"
     set_state "$clear"; wait_replicas "$service_name" 0; wait_running_tasks "$service_name" 0
     log_file="$SCENARIO_DIR/$provider-swarm-drain-$drain_run.log"
     docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" > "$log_file" 2>&1 \
