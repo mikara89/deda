@@ -25,6 +25,8 @@
     <ProjectReference Include="..\Deda.Triggers.Prometheus\Deda.Triggers.Prometheus.csproj" />
     <ProjectReference Include="..\Deda.Triggers.Http\Deda.Triggers.Http.csproj" />
     <ProjectReference Include="..\Deda.Triggers.RabbitMq\Deda.Triggers.RabbitMq.csproj" />
+    <ProjectReference Include="..\Deda.Triggers.Ci\Deda.Triggers.Ci.csproj" />
+    <ProjectReference Include="..\Deda.Credentials\Deda.Credentials.csproj" />
     <ProjectReference Include="..\Deda.Updates\Deda.Updates.csproj" />
     <ProjectReference Include="..\Deda.HA\Deda.HA.csproj" />
     <ProjectReference Include="..\Deda.Observability\Deda.Observability.csproj" />

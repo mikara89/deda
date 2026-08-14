@@ -23,6 +23,8 @@
     <ProjectReference Include="..\..\src\Deda.Triggers.Prometheus\Deda.Triggers.Prometheus.csproj" />
     <ProjectReference Include="..\..\src\Deda.Triggers.Http\Deda.Triggers.Http.csproj" />
     <ProjectReference Include="..\..\src\Deda.Triggers.RabbitMq\Deda.Triggers.RabbitMq.csproj" />
+    <ProjectReference Include="..\..\src\Deda.Credentials\Deda.Credentials.csproj" />
+    <ProjectReference Include="..\..\src\Deda.Triggers.Ci\Deda.Triggers.Ci.csproj" />
   </ItemGroup>
 
 </Project>

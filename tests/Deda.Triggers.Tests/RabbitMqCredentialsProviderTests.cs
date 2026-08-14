@@ -1,4 +1,5 @@
 using Deda.Core;
+using Deda.Credentials;
 using Deda.Triggers.RabbitMq;
 
 namespace Deda.Triggers.Tests;
@@ -66,9 +67,9 @@ public sealed class RabbitMqCredentialsProviderTests
     [Fact]
     public void CredentialReference_RequiresBoundServiceAndAllowedHost()
     {
-        var policy = new RabbitMqCredentialPolicy(new Dictionary<string, RabbitMqCredentialBinding>
+        var policy = new CredentialPolicy(new Dictionary<string, CredentialBinding>
         {
-            ["orders"] = new("orders-rabbitmq", new HashSet<string>(["rabbitmq.internal"]), new HashSet<string>(["worker"])),
+            ["orders"] = new("rabbitmq", "orders-rabbitmq", new HashSet<string>(["rabbitmq.internal"]), new HashSet<string>(["worker"])),
         });
         var provider = new EnvOrFileRabbitMqCredentialsProvider(new RecordingSecretResolver("alice:secret"), policy, false);
         var config = new ScaleConfig { TriggerConfig = new Dictionary<string, string> { ["credentialsRef"] = "orders", ["url"] = "http://rabbitmq.internal:15672" } };
@@ -85,8 +86,8 @@ public sealed class RabbitMqCredentialsProviderTests
         try
         {
             File.WriteAllText(path, """{"orders":{"secret":"orders-rabbitmq","allowedHosts":["rabbitmq.internal"],"allowedServices":["worker"]}}""");
-            var policy = RabbitMqCredentialPolicy.FromJsonFile(path);
-            var binding = policy.Resolve(Service(), "orders", "http://rabbitmq.internal:15672");
+            var policy = CredentialPolicy.FromJsonFile(path);
+            var binding = policy.Resolve(Service(), "orders", new Uri("http://rabbitmq.internal:15672"));
 
             Assert.Equal("orders-rabbitmq", binding.Secret);
             Assert.Contains("rabbitmq.internal", binding.AllowedHosts);
