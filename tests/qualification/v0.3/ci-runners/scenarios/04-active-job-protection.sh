@@ -33,6 +33,8 @@ for provider in github azure gitlab; do
     docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" > "$log_file" 2>&1 \
       || fail_scenario "could not collect $provider drain run $drain_run log"
     wait_running_tasks "$service_name" 0
+    docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" >> "$log_file" 2>&1 \
+      || fail_scenario "could not collect completed $provider drain run $drain_run log"
     case "$provider" in
       github)
         if ! grep -Fq 'preserving the active ephemeral job' "$log_file"; then
