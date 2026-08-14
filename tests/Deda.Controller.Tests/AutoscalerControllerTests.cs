@@ -170,6 +170,7 @@ public sealed class AutoscalerControllerTests
         await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
 
         Assert.Contains((original.ServiceId, "worker-v1"), fixture.Telemetry.RemovedServices);
+        Assert.Contains((original.ServiceId, "worker-v1"), fixture.Lifecycle.RemovedServices);
     }
 
     [Fact]
@@ -323,6 +324,7 @@ public sealed class AutoscalerControllerTests
         public FakePolicy Policy { get; } = new();
         public FakeStateStore StateStore { get; } = new();
         public RecordingTelemetry Telemetry { get; } = new();
+        public RecordingLifecycle Lifecycle { get; } = new();
         public RecordingUpdateStrategy Updates { get; } = new();
         public AutoscalerController Controller { get; }
 
@@ -337,7 +339,8 @@ public sealed class AutoscalerControllerTests
                 Telemetry,
                 Updates,
                 hostOptions ?? new HostOptions(10, 0, false),
-                leader);
+                leader,
+                [Lifecycle]);
         }
     }
 
@@ -498,6 +501,12 @@ public sealed class AutoscalerControllerTests
 
         public void RemoveService(string serviceId, string serviceName) =>
             RemovedServices.Add((serviceId, serviceName));
+    }
+
+    private sealed class RecordingLifecycle : IServiceLifecycleObserver
+    {
+        public List<(string ServiceId, string ServiceName)> RemovedServices { get; } = [];
+        public void RemoveService(string serviceId, string serviceName) => RemovedServices.Add((serviceId, serviceName));
     }
 
     private sealed class RecordingUpdateStrategy : IServiceUpdateStrategy

@@ -175,6 +175,12 @@
         void RecordServices(int discovered, int evaluated, TimeSpan queueDuration) { }
     }
 
+    /// <summary>Receives lifecycle notifications for auxiliary per-service telemetry.</summary>
+    public interface IServiceLifecycleObserver
+    {
+        void RemoveService(string serviceId, string serviceName);
+    }
+
     public sealed record ReconciliationHealthSnapshot(
         DateTimeOffset? LastAttemptUtc,
         DateTimeOffset? LastSuccessfulUtc,

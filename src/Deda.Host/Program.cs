@@ -109,6 +109,8 @@ builder.Services.AddHttpClient("github-actions", client => client.Timeout = Time
 builder.Services.AddHttpClient("azure-pipelines", client => client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
 builder.Services.AddHttpClient("gitlab-ci", client => client.Timeout = TimeSpan.FromSeconds(opts.DefaultHttpTimeoutSeconds));
 builder.Services.AddSingleton<CredentialTokenProvider>();
+builder.Services.AddSingleton<CiObservationCache>();
+builder.Services.AddSingleton<IServiceLifecycleObserver, CiTelemetryLifecycle>();
 builder.Services.AddSingleton<GitHubActionsQueueProvider>();
 builder.Services.AddSingleton<AzurePipelinesQueueProvider>();
 builder.Services.AddSingleton<GitLabCiQueueProvider>();

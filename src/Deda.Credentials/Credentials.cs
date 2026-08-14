@@ -48,7 +48,9 @@ public sealed class CredentialPolicy
             throw new InvalidOperationException($"Credential reference '{reference}' is not defined by the operator policy.");
         if (!string.IsNullOrWhiteSpace(expectedType) && !string.Equals(binding.Type, expectedType, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"Credential reference '{reference}' is not a '{expectedType}' credential.");
-        if (binding.AllowedHosts.Count > 0 && !binding.AllowedHosts.Contains(endpoint.Host))
+        if (binding.AllowedHosts.Count == 0)
+            throw new InvalidOperationException($"Credential reference '{reference}' must define at least one allowed host.");
+        if (!binding.AllowedHosts.Contains(endpoint.Host))
             throw new InvalidOperationException($"Endpoint host '{endpoint.Host}' is not allowed for credential reference '{reference}'.");
         if (binding.AllowedServices.Count > 0 && !binding.AllowedServices.Contains(service.Name) && !binding.AllowedServices.Contains(service.ServiceId))
             throw new InvalidOperationException($"Service '{service.Name}' is not permitted to use credential reference '{reference}'.");

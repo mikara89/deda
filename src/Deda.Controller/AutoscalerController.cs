@@ -21,7 +21,8 @@ namespace Deda.Controller
         private readonly IServiceUpdateStrategy _updates;
         private readonly ILeaderElector? _leader;
         private readonly HostOptions _hostOptions;
-        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _managedServices = new(StringComparer.Ordinal);
+        private readonly IReadOnlyList<IServiceLifecycleObserver> _lifecycleObservers;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ManagedService> _managedServices = new(StringComparer.Ordinal);
 
         public AutoscalerController(
             ISwarmServiceClient swarm,
@@ -32,7 +33,8 @@ namespace Deda.Controller
             IAutoscalerTelemetry telemetry,
             IServiceUpdateStrategy updates,
             HostOptions hostOptions,
-            ILeaderElector? leader = null)
+            ILeaderElector? leader = null,
+            IEnumerable<IServiceLifecycleObserver>? lifecycleObservers = null)
         {
             _swarm = swarm;
             _configProvider = configProvider;
@@ -43,6 +45,7 @@ namespace Deda.Controller
             _updates = updates;
             _leader = leader;
             _hostOptions = hostOptions;
+            _lifecycleObservers = lifecycleObservers?.ToArray() ?? [];
         }
 
         public async Task ReconcileOnceAsync(CancellationToken ct)
@@ -91,7 +94,7 @@ namespace Deda.Controller
 
             var liveServiceIds = services.Select(s => s.ServiceId).ToHashSet(StringComparer.Ordinal);
             foreach (var stale in _managedServices.Where(entry => !liveServiceIds.Contains(entry.Key)).ToArray())
-                RemoveManagedService(stale.Key, stale.Value);
+                RemoveManagedService(stale.Key, stale.Value.Name);
         }
 
         private async Task ReconcileServiceAsync(ServiceRef svc, DateTimeOffset now, CancellationToken ct)
@@ -127,7 +130,7 @@ namespace Deda.Controller
                         return;
                     }
 
-                    TrackManagedService(svc);
+                    TrackManagedService(svc, cfg.TriggerType);
 
                     var state = _stateStore.GetOrAdd(svc.ServiceId);
 
@@ -188,25 +191,36 @@ namespace Deda.Controller
             }
         }
 
-        private void TrackManagedService(ServiceRef service)
+        private void TrackManagedService(ServiceRef service, string triggerType)
         {
-            if (_managedServices.TryGetValue(service.ServiceId, out var previousName) &&
-                !string.Equals(previousName, service.Name, StringComparison.Ordinal))
+            if (_managedServices.TryGetValue(service.ServiceId, out var previous) &&
+                (!string.Equals(previous.Name, service.Name, StringComparison.Ordinal) ||
+                 !string.Equals(previous.TriggerType, triggerType, StringComparison.OrdinalIgnoreCase)))
             {
-                _telemetry.RemoveService(service.ServiceId, previousName);
+                _telemetry.RemoveService(service.ServiceId, previous.Name);
+                NotifyServiceRemoved(service.ServiceId, previous.Name);
             }
 
-            _managedServices[service.ServiceId] = service.Name;
+            _managedServices[service.ServiceId] = new(service.Name, triggerType);
         }
 
         private void RemoveManagedService(string serviceId, string fallbackName)
         {
-            if (_managedServices.TryRemove(serviceId, out var name))
+            if (_managedServices.TryRemove(serviceId, out var managed))
             {
                 _stateStore.Remove(serviceId);
-                _telemetry.RemoveService(serviceId, name);
+                _telemetry.RemoveService(serviceId, managed.Name);
+                NotifyServiceRemoved(serviceId, managed.Name);
             }
         }
+
+        private void NotifyServiceRemoved(string serviceId, string serviceName)
+        {
+            foreach (var observer in _lifecycleObservers)
+                observer.RemoveService(serviceId, serviceName);
+        }
+
+        private sealed record ManagedService(string Name, string TriggerType);
 
         private static int StableHash(string s)
         {

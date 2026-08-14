@@ -8,14 +8,20 @@ public interface ICiQueueProvider
     Task<CiQueueSnapshot> GetQueueAsync(ServiceRef service, ScaleConfig config, CancellationToken cancellationToken);
 }
 
-public abstract class CiTriggerAdapter(ICiQueueProvider provider) : ITriggerAdapter
+public abstract class CiTriggerAdapter(ICiQueueProvider provider, CiObservationCache? cache = null) : ITriggerAdapter
 {
+    private readonly CiObservationCache _cache = cache ?? new CiObservationCache();
     public string Type => provider.Type;
     public async Task<TriggerResult> GetWorkAsync(ServiceRef service, ScaleConfig config, CancellationToken ct)
     {
         try
         {
-            var snapshot = await provider.GetQueueAsync(service, config, ct).ConfigureAwait(false);
+            var snapshot = await _cache.GetAsync(
+                Type,
+                service,
+                config,
+                providerCt => provider.GetQueueAsync(service, config, providerCt),
+                ct).ConfigureAwait(false);
             if (snapshot.Queued < 0 || snapshot.Active < 0) return TriggerResult.Fail("CI provider returned negative capacity.");
             CiDiagnostics.Record(Type, service.Name, snapshot);
             return TriggerResult.Ok(snapshot.RequiredCapacity);

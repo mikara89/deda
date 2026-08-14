@@ -55,8 +55,9 @@ current implementation.
 | `deda_ci_jobs_queued` | Observable gauge | `provider`, `service` | Latest compatible queued jobs. |
 | `deda_ci_jobs_active` | Observable gauge | `provider`, `service` | Latest compatible active jobs. |
 | `deda_ci_required_capacity` | Observable gauge | `provider`, `service` | Queued plus active jobs; this is the trigger workload. |
-| `deda_ci_api_requests_total` | Counter | `provider` | Successful CI queue observations. |
+| `deda_ci_api_requests_total` | Counter | `provider` | HTTP requests issued to CI provider APIs. |
 | `deda_ci_api_failures_total` | Counter | `provider` | Failed CI provider observations. |
+| `deda_ci_observations_total` | Counter | `provider` | Successful uncached provider observations. |
 | `deda_ci_observation_age_seconds` | Observable gauge | `provider`, `service` | Age of the most recent successful queue observation. |
 
 ### Scaling
