@@ -29,7 +29,20 @@ for provider in github azure gitlab; do
     (( started_jobs >= 5 )) || fail_scenario "$provider drain run $drain_run did not start all five active jobs before downscale"
     log_file="$SCENARIO_DIR/$provider-swarm-drain-$drain_run.log"
     set_state "$clear"; wait_replicas "$service_name" 0
-    sleep 5
+    case "$provider" in
+      github) drain_marker='runner exited during drain' ;;
+      azure) drain_marker='one-job agent exited during drain' ;;
+      gitlab) drain_marker='completed-after-drain' ;;
+    esac
+    drain_marker_seen=false
+    for _ in $(seq 1 150); do
+      if docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" 2>/dev/null | grep -Fq "$drain_marker"; then
+        drain_marker_seen=true
+        break
+      fi
+      sleep 1
+    done
+    "$drain_marker_seen" || fail_scenario "$provider drain run $drain_run did not produce its completion marker"
     docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" > "$log_file" 2>&1 \
       || fail_scenario "could not collect $provider drain run $drain_run log"
     wait_running_tasks "$service_name" 0
