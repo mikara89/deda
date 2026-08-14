@@ -1,0 +1,139 @@
+version: "3.8"
+
+networks:
+  control:
+    driver: overlay
+    attachable: true
+
+configs:
+  credential_policy:
+    file: ./credential-policy.json
+  prometheus_config:
+    file: ./prometheus.yml
+
+secrets:
+  github_queue: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_github_queue }
+  azure_queue: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_azure_queue }
+  gitlab_queue: { external: true, name: ${QUAL_SECRET_PREFIX:?QUAL_SECRET_PREFIX_required}_gitlab_queue }
+
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    networks: [control]
+    environment: { SERVICES: "1", TASKS: "1", NODES: "1", SWARM: "1", VERSION: "1", POST: "1" }
+    deploy: { placement: { constraints: [node.role == manager] } }
+  redis:
+    image: redis:7-alpine
+    networks: [control]
+    deploy: { placement: { constraints: [node.role == manager] } }
+  simulator:
+    image: ${CI_SIMULATOR_IMAGE:?CI_SIMULATOR_IMAGE_required}
+    networks: [control]
+    deploy: { placement: { constraints: [node.role == manager] } }
+  deda:
+    image: ${DEDA_IMAGE:?DEDA_IMAGE_required}
+    networks: [control]
+    secrets: [github_queue, azure_queue, gitlab_queue]
+    configs: [{ source: credential_policy, target: /run/deda/credential-policy.json }, { source: prometheus_config, target: /run/deda/prometheus.yml }]
+    environment:
+      DOCKER_HOST: http://docker-proxy:2375
+      DEDA_POLL_SECONDS: "2"
+      DEDA_REDIS_CONNECTION: redis:6379,abortConnect=false
+      DEDA_LEADER_LOCK_KEY: deda-v03-qualification:leader
+      DEDA_LEADER_LEASE_SECONDS: "8"
+      DEDA_LEADER_RENEW_SECONDS: "2"
+      DEDA_READINESS_MAX_AGE_SECONDS: "20"
+      DEDA_CREDENTIAL_POLICY_FILE: /run/deda/credential-policy.json
+    deploy:
+      replicas: 2
+      placement: { constraints: [node.role == manager] }
+  github-runner:
+    image: ${CI_RUNNER_SIMULATOR_IMAGE:?CI_RUNNER_SIMULATOR_IMAGE_required}
+    networks: [control]
+    environment: { SIMULATED_PROVIDER: github, SIMULATED_JOB_SECONDS: "12" }
+    stop_grace_period: 90s
+    deploy:
+      replicas: 0
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.max: "10"
+        com.deda.autoscale.targetPerReplica: "1"
+        com.deda.autoscale.cooldownSeconds: "0"
+        com.deda.autoscale.scaleDownDelaySeconds: "0"
+        com.deda.autoscale.scaleToZeroGraceSeconds: "2"
+        com.deda.autoscale.stepDown: "1"
+        com.deda.autoscale.failsafe: "hold"
+        com.deda.autoscale.trigger.type: "github-actions"
+        com.deda.autoscale.trigger.apiUrl: "http://simulator:8081"
+        com.deda.autoscale.trigger.owner: "qualification"
+        com.deda.autoscale.trigger.repos: "repo"
+        com.deda.autoscale.trigger.labels: "self-hosted,linux,deda"
+        com.deda.autoscale.trigger.credentialsRef: "github-queue"
+        com.deda.autoscale.trigger.refreshSeconds: "1"
+  azure-runner:
+    image: ${CI_RUNNER_SIMULATOR_IMAGE:?CI_RUNNER_SIMULATOR_IMAGE_required}
+    networks: [control]
+    environment: { SIMULATED_PROVIDER: azure, SIMULATED_JOB_SECONDS: "12" }
+    stop_grace_period: 90s
+    deploy:
+      replicas: 0
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.max: "10"
+        com.deda.autoscale.targetPerReplica: "1"
+        com.deda.autoscale.cooldownSeconds: "0"
+        com.deda.autoscale.scaleDownDelaySeconds: "0"
+        com.deda.autoscale.scaleToZeroGraceSeconds: "2"
+        com.deda.autoscale.stepDown: "1"
+        com.deda.autoscale.failsafe: "hold"
+        com.deda.autoscale.trigger.type: "azure-pipelines"
+        com.deda.autoscale.trigger.organizationUrl: "http://simulator:8081"
+        com.deda.autoscale.trigger.poolId: "1"
+        com.deda.autoscale.trigger.demands: "deda,Agent.OS=Linux"
+        com.deda.autoscale.trigger.credentialsRef: "azure-queue"
+        com.deda.autoscale.trigger.refreshSeconds: "1"
+  invalid-github-runner:
+    image: ${CI_RUNNER_SIMULATOR_IMAGE:?CI_RUNNER_SIMULATOR_IMAGE_required}
+    networks: [control]
+    environment: { SIMULATED_PROVIDER: invalid-github, SIMULATED_JOB_SECONDS: "12" }
+    deploy:
+      replicas: 0
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.max: "10"
+        com.deda.autoscale.targetPerReplica: "1"
+        com.deda.autoscale.cooldownSeconds: "0"
+        com.deda.autoscale.scaleDownDelaySeconds: "0"
+        com.deda.autoscale.failsafe: "hold"
+        com.deda.autoscale.trigger.type: "github-actions"
+        com.deda.autoscale.trigger.apiUrl: "http://simulator:8081"
+        com.deda.autoscale.trigger.owner: "qualification"
+        com.deda.autoscale.trigger.repos: "repo"
+        com.deda.autoscale.trigger.labels: "self-hosted,linux,deda"
+        com.deda.autoscale.trigger.credentialsRef: "unknown-credential"
+        com.deda.autoscale.trigger.refreshSeconds: "1"
+  gitlab-runner:
+    image: ${CI_RUNNER_SIMULATOR_IMAGE:?CI_RUNNER_SIMULATOR_IMAGE_required}
+    networks: [control]
+    environment: { SIMULATED_PROVIDER: gitlab, SIMULATED_JOB_SECONDS: "12" }
+    stop_signal: SIGQUIT
+    stop_grace_period: 90s
+    deploy:
+      replicas: 0
+      labels:
+        com.deda.autoscale.enabled: "true"
+        com.deda.autoscale.max: "10"
+        com.deda.autoscale.targetPerReplica: "1"
+        com.deda.autoscale.cooldownSeconds: "0"
+        com.deda.autoscale.scaleDownDelaySeconds: "0"
+        com.deda.autoscale.scaleToZeroGraceSeconds: "2"
+        com.deda.autoscale.stepDown: "1"
+        com.deda.autoscale.failsafe: "hold"
+        com.deda.autoscale.trigger.type: "gitlab-ci"
+        com.deda.autoscale.trigger.url: "http://simulator:8081"
+        com.deda.autoscale.trigger.projects: "qualification/repo"
+        com.deda.autoscale.trigger.tags: "linux,deda"
+        com.deda.autoscale.trigger.runUntagged: "false"
+        com.deda.autoscale.trigger.credentialsRef: "gitlab-queue"
+        com.deda.autoscale.trigger.refreshSeconds: "1"

@@ -115,6 +115,18 @@ Validate signatures, checksums, SBOMs, and provenance according to your supply
 chain policy. Test each upgrade in a representative Swarm and retain a rollback
 image reference.
 
+## CI runner release qualification
+
+The v0.3 CI runner qualification separates local deterministic evidence from
+real-provider evidence. The deterministic simulator can prove DEDA's Swarm
+reconciliation, compatibility matching, cache behavior, fail-safe handling, and
+HA behavior without SaaS credentials. It does not make a release qualified.
+
+Run real-provider qualification only against dedicated, pre-existing GitHub,
+Azure DevOps, and GitLab targets, with explicit operator confirmation and
+file-based credentials. Retain the resulting Swarm, DEDA, provider-job, and
+runner lifecycle evidence. See [v0.3 CI runner qualification](qualification/ci-runners-v0.3.md).
+
 ## Pre-deployment checklist
 
 - [ ] Swarm manager placement is enforced.
