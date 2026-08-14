@@ -18,7 +18,7 @@ flowchart LR
 
 Create the named secrets before deployment. The example policy files are Docker configs, not secrets: they name secrets and restrict their use but contain no token values. Build and publish the runner image (or set the documented `*_RUNNER_IMAGE` value) before `docker stack deploy`.
 
-All examples use `min=0`, `targetPerReplica=1`, conservative cooldown and delay settings, `failsafe=hold`, and a 30 minute `stop_grace_period`. They intentionally use ordinary shell/tooling jobs; no runner has a Docker socket, Docker API access, privileged mode, or provider token injected into a job definition. Docker-in-Docker or a host socket is a separate, high-risk design and is not included here.
+All examples use `min=0`, `targetPerReplica=1`, conservative cooldown and delay settings, `failsafe=hold`, and a 30 minute `stop_grace_period`. A root-only supervisor reads the long-lived registration secret and starts the provider runner as an unprivileged job user; Docker secret mounts explicitly use root UID/GID and mode `0400`. They intentionally use ordinary shell/tooling jobs; no runner has a Docker socket, Docker API access, privileged mode, or provider token injected into a job definition. Docker-in-Docker or a host socket is a separate, high-risk design and is not included here.
 
 DEDA caches provider observations for `refreshSeconds`; its CI metrics expose API request volume, queue/active counts, capacity, and observation age. Retain Swarm task stdout/stderr centrally: GitHub specifically recommends external preservation of ephemeral-runner logs.
 
@@ -28,4 +28,4 @@ Run local deterministic wrapper checks with:
 bash tests/ci-runners/lifecycle-tests.sh
 ```
 
-They do not contact CI providers or require secrets.
+CI additionally builds each reference image and runs `tests/ci-runners/security-tests.sh`, which proves the unprivileged job users cannot read a root-mode registration-secret mount. Neither test contacts CI providers or requires real secrets.

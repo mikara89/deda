@@ -1,6 +1,6 @@
 FROM ubuntu:24.04
 
-ARG RUNNER_VERSION=2.329.0
+ARG RUNNER_VERSION=2.334.0
 ARG TARGETARCH=amd64
 ARG RUNNER_SHA256_AMD64
 ARG RUNNER_SHA256_ARM64
@@ -18,7 +18,7 @@ RUN apt-get update \
  && useradd --create-home --uid 10001 runner \
  && chown -R runner:runner /opt/actions-runner
 
-COPY --chown=runner:runner --chmod=755 entrypoint.sh /usr/local/bin/ci-runner-entrypoint
-USER runner
+COPY --chmod=755 entrypoint.sh /usr/local/bin/ci-runner-entrypoint
+COPY --chmod=755 hooks/job-started.sh hooks/job-completed.sh /usr/local/lib/deda-runner-hooks/
 WORKDIR /opt/actions-runner
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/ci-runner-entrypoint"]

@@ -120,6 +120,17 @@ jobs:
         run: |
           bash tests/examples/validate-stacks.sh
           bash tests/ci-runners/lifecycle-tests.sh
+      - name: Build CI runner reference images
+        run: |
+          docker build \
+            --build-arg RUNNER_SHA256_AMD64=048024cd2c848eb6f14d5646d56c13a4def2ae7ee3ad12122bee960c56f3d271 \
+            -t deda-github-runner:ci examples/ci-runners/github-actions
+          docker build \
+            --build-arg AGENT_SHA256_AMD64=828220fc662131f8d6bd427c8d8b9bffae064a9b1532b7e448d58766276b31fa \
+            -t deda-azure-runner:ci examples/ci-runners/azure-pipelines
+          docker build -t deda-gitlab-runner:ci examples/ci-runners/gitlab
+      - name: Verify runner job-user secret isolation
+        run: bash tests/ci-runners/security-tests.sh
       - name: Validate qualification harness (no cloud access)
         run: |
           find tests/qualification/v0.2/hetzner -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n

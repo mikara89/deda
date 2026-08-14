@@ -1,6 +1,6 @@
 # GitLab Runner
 
-This image extends the pinned multi-architecture `gitlab/gitlab-runner:alpine-v17.11.0` image and runs the shell executor as an unprivileged user. The shell executor is deliberately limited to simple tooling jobs; it has no Docker socket and should only serve trusted projects because shell jobs share the runner task environment.
+This image extends the pinned multi-architecture `gitlab/gitlab-runner:alpine-v17.11.0` image. The runner manager remains root so it can read the root-only authentication secret and configuration; its shell executor explicitly drops every job to the unprivileged `ci-job` user, which cannot read that configuration. The shell executor is deliberately limited to simple tooling jobs; it has no Docker socket and should only serve trusted projects because shell jobs share the runner task environment.
 
 Create a group or project runner in GitLab first, set its tags to exactly `linux,deda`, disable **Run untagged jobs**, and store its `glrt-…` runner authentication token separately from the API token DEDA uses to read jobs:
 

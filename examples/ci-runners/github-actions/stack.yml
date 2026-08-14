@@ -22,7 +22,7 @@ services:
     image: ${GITHUB_RUNNER_IMAGE:-ghcr.io/mikara89/deda-github-runner:v0.3.0}
     networks: [deda_net]
     environment: { GITHUB_OWNER: "example-org", GITHUB_RUNNER_SCOPE: "org", GITHUB_RUNNER_LABELS: "self-hosted,linux,deda" }
-    secrets: [{ source: github-runner-admin, target: github-runner-admin, mode: 0400 }]
+    secrets: [{ source: github-runner-admin, target: github-runner-admin, uid: "0", gid: "0", mode: 0400 }]
     stop_grace_period: 30m
     deploy:
       replicas: 0

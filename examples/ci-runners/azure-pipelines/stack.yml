@@ -18,7 +18,7 @@ services:
     image: ${AZURE_RUNNER_IMAGE:-ghcr.io/mikara89/deda-azure-runner:v0.3.0}
     networks: [deda_net]
     environment: { AZP_URL: "https://dev.azure.com/example-org", AZP_POOL: "deda-swarm", DEDA: "true" }
-    secrets: [{ source: ado-agent-registration, target: ado-agent-registration, mode: 0400 }]
+    secrets: [{ source: ado-agent-registration, target: ado-agent-registration, uid: "0", gid: "0", mode: 0400 }]
     stop_grace_period: 30m
     deploy:
       replicas: 0

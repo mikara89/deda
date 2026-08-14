@@ -18,7 +18,7 @@ services:
     image: ${GITLAB_RUNNER_IMAGE:-ghcr.io/mikara89/deda-gitlab-runner:v0.3.0}
     networks: [deda_net]
     environment: { CI_SERVER_URL: "https://gitlab.com", GITLAB_RUNNER_NAME: "deda-gitlab-{{.Task.Slot}}-{{.Task.ID}}" }
-    secrets: [{ source: gitlab-runner-auth, target: gitlab-runner-auth, mode: 0400 }]
+    secrets: [{ source: gitlab-runner-auth, target: gitlab-runner-auth, uid: "0", gid: "0", mode: 0400 }]
     stop_signal: SIGQUIT
     stop_grace_period: 30m
     deploy:

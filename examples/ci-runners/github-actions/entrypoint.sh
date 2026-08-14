@@ -8,7 +8,8 @@ scope=${GITHUB_RUNNER_SCOPE:-org}
 owner=${GITHUB_OWNER:?GITHUB_OWNER is required}
 repository=${GITHUB_REPOSITORY:-}
 labels=${GITHUB_RUNNER_LABELS:-self-hosted,linux,deda}
-runner_name=${GITHUB_RUNNER_NAME:-deda-gh-${HOSTNAME}}
+runner_name=${GITHUB_RUNNER_NAME:-deda-gh-${HOSTNAME:-unknown}}
+state_dir=${GITHUB_RUNNER_STATE_DIR:-/run/deda-runner}
 cleanup_retries=${GITHUB_CLEANUP_RETRIES:-3}
 cleanup_delay=${GITHUB_CLEANUP_DELAY_SECONDS:-5}
 runner_pid=
@@ -39,10 +40,17 @@ cleanup() {
   done
   "$runner_home/config.sh" remove --unattended --token "$remove_token" >/dev/null 2>&1 || log "runner was already removed or provider cleanup was unavailable"
 }
+run_as_runner() {
+  if [ "${GITHUB_RUNNER_TEST_NO_PRIVDROP:-0}" = 1 ]; then "$@"; else runuser --preserve-environment -u runner -- "$@"; fi
+}
 drain() {
   draining=true
-  log "shutdown requested; asking runner to stop after its current work"
-  test -n "$runner_pid" && kill -TERM "$runner_pid" 2>/dev/null || true
+  if test -e "$state_dir/busy"; then
+    log "shutdown requested while busy; preserving the active ephemeral job"
+  else
+    log "shutdown requested while idle; stopping the runner"
+    test -n "$runner_pid" && kill -TERM "$runner_pid" 2>/dev/null || true
+  fi
 }
 wait_for_runner() {
   local status
@@ -60,10 +68,15 @@ trap cleanup EXIT
 
 require_secret
 registration_token=$(api -X POST "$(token_endpoint)" | jq -er '.token') || { log "could not obtain registration token"; exit 1; }
-"$runner_home/config.sh" --unattended --url "https://github.com/${repository:-$owner}" --token "$registration_token" --name "$runner_name" --labels "$labels" --ephemeral --disableupdate --replace
+RUNNER_ALLOW_RUNASROOT=1 "$runner_home/config.sh" --unattended --url "https://github.com/${repository:-$owner}" --token "$registration_token" --name "$runner_name" --labels "$labels" --ephemeral --disableupdate --replace
 unset registration_token
 configured=true
-"$runner_home/run.sh" & runner_pid=$!
+mkdir -p "$state_dir"
+if [ "${GITHUB_RUNNER_TEST_NO_PRIVDROP:-0}" != 1 ]; then chown -R runner:runner "$state_dir" "$runner_home"; fi
+export DEDA_RUNNER_STATE_DIR="$state_dir"
+export ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/deda-runner-hooks/job-started.sh
+export ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/usr/local/lib/deda-runner-hooks/job-completed.sh
+run_as_runner "$runner_home/run.sh" & runner_pid=$!
 wait_for_runner || exit=$?
 runner_pid=
 if "$draining"; then log "runner exited during drain"; fi

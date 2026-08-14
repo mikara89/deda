@@ -1,6 +1,6 @@
 FROM ubuntu:24.04
 
-ARG AGENT_VERSION=4.264.0
+ARG AGENT_VERSION=4.274.0
 ARG TARGETARCH=amd64
 ARG AGENT_SHA256_AMD64
 ARG AGENT_SHA256_ARM64
@@ -16,7 +16,6 @@ RUN apt-get update \
  && tar -xzf /tmp/agent.tar.gz -C /azp/agent \
  && rm /tmp/agent.tar.gz \
  && chown -R azp:azp /azp
-COPY --chown=azp:azp --chmod=755 start.sh /usr/local/bin/azp-start
-USER azp
+COPY --chmod=755 start.sh /usr/local/bin/azp-start
 WORKDIR /azp/agent
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/azp-start"]
