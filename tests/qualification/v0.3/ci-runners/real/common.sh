@@ -28,15 +28,18 @@ export_real_candidate_images() {
 image_digest() {
   docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true
 }
+reference_digest() {
+  printf '%s\n' "${1##*@}"
+}
 write_real_candidate() {
   local provider=$1 file
   file="$(real_result_dir "$provider")/candidate.json"
   jq -n --arg provider "$provider" --arg collectedAt "$(utc_now)" --arg candidateCommit "$(git rev-parse HEAD)" \
-    --arg dedaImage "$DEDA_IMAGE" --arg dedaDigest "$(image_digest "$DEDA_IMAGE")" \
-    --arg githubRunnerImage "$GITHUB_RUNNER_IMAGE" --arg githubRunnerDigest "$(image_digest "$GITHUB_RUNNER_IMAGE")" \
-    --arg azureRunnerImage "$AZURE_RUNNER_IMAGE" --arg azureRunnerDigest "$(image_digest "$AZURE_RUNNER_IMAGE")" \
-    --arg gitlabRunnerImage "$GITLAB_RUNNER_IMAGE" --arg gitlabRunnerDigest "$(image_digest "$GITLAB_RUNNER_IMAGE")" \
-    '{provider:$provider,collectedAt:$collectedAt,candidateCommit:$candidateCommit,dedaImage:$dedaImage,dedaDigest:$dedaDigest,githubRunnerImage:$githubRunnerImage,githubRunnerDigest:$githubRunnerDigest,azureRunnerImage:$azureRunnerImage,azureRunnerDigest:$azureRunnerDigest,gitlabRunnerImage:$gitlabRunnerImage,gitlabRunnerDigest:$gitlabRunnerDigest,containsSecrets:false}' > "$file"
+    --arg dedaImage "$DEDA_IMAGE" --arg dedaReferenceDigest "$(reference_digest "$DEDA_IMAGE")" --arg dedaDigest "$(image_digest "$DEDA_IMAGE")" \
+    --arg githubRunnerImage "$GITHUB_RUNNER_IMAGE" --arg githubRunnerReferenceDigest "$(reference_digest "$GITHUB_RUNNER_IMAGE")" --arg githubRunnerLocalImageId "$(image_digest "$GITHUB_RUNNER_IMAGE")" \
+    --arg azureRunnerImage "$AZURE_RUNNER_IMAGE" --arg azureRunnerReferenceDigest "$(reference_digest "$AZURE_RUNNER_IMAGE")" --arg azureRunnerLocalImageId "$(image_digest "$AZURE_RUNNER_IMAGE")" \
+    --arg gitlabRunnerImage "$GITLAB_RUNNER_IMAGE" --arg gitlabRunnerReferenceDigest "$(reference_digest "$GITLAB_RUNNER_IMAGE")" --arg gitlabRunnerLocalImageId "$(image_digest "$GITLAB_RUNNER_IMAGE")" \
+    '{provider:$provider,collectedAt:$collectedAt,candidateCommit:$candidateCommit,dedaImage:$dedaImage,dedaReferenceDigest:$dedaReferenceDigest,dedaDigest:$dedaDigest,githubRunnerImage:$githubRunnerImage,githubRunnerReferenceDigest:$githubRunnerReferenceDigest,githubRunnerLocalImageId:$githubRunnerLocalImageId,azureRunnerImage:$azureRunnerImage,azureRunnerReferenceDigest:$azureRunnerReferenceDigest,azureRunnerLocalImageId:$azureRunnerLocalImageId,gitlabRunnerImage:$gitlabRunnerImage,gitlabRunnerReferenceDigest:$gitlabRunnerReferenceDigest,gitlabRunnerLocalImageId:$gitlabRunnerLocalImageId,containsSecrets:false}' > "$file"
 }
 real_result_dir() { printf '%s/real-%s' "$(result_root)" "$1"; }
 begin_real() { mkdir -p "$(real_result_dir "$1")"; }

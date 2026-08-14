@@ -7,7 +7,7 @@ export_real_candidate_images
 init_run
 overall=0
 for provider in github azure-pipelines gitlab; do
-  "$SCRIPT_DIR/$provider.sh" --confirm-real-provider-tests || overall=1
+  bash "$SCRIPT_DIR/$provider.sh" --confirm-real-provider-tests || overall=1
 done
 root=$(result_root)
 for provider in github azure-pipelines gitlab; do
@@ -43,7 +43,7 @@ else
       if [[ -z "$candidate_reference" ]]; then
         candidate_reference="$candidate"
       fi
-      for field in githubRunnerImage githubRunnerDigest azureRunnerImage azureRunnerDigest gitlabRunnerImage gitlabRunnerDigest; do
+      for field in githubRunnerImage githubRunnerReferenceDigest azureRunnerImage azureRunnerReferenceDigest gitlabRunnerImage gitlabRunnerReferenceDigest; do
         [[ -n "$(jq -r ."$field" "$candidate")" ]] || candidate_matched=0
         [[ $(jq -r ."$field" "$candidate") == "$(jq -r ."$field" "$candidate_reference")" ]] || candidate_matched=0
         [[ $candidate_matched -eq 1 ]] || break
@@ -55,7 +55,7 @@ candidate_matched_arg=false
 [[ $candidate_matched -eq 1 ]] && candidate_matched_arg=true
 candidate_json='{}'
 if [[ $candidate_matched -eq 1 ]]; then
-  candidate_json=$(jq -s '.[0] | {commit:.candidateCommit,deda:.dedaDigest,githubRunner:.githubRunnerDigest,azureRunner:.azureRunnerDigest,gitlabRunner:.gitlabRunnerDigest}' "$root"/real-*/candidate.json)
+  candidate_json=$(jq -s '.[0] | {commit:.candidateCommit,deda:.dedaDigest,githubRunner:.githubRunnerReferenceDigest,azureRunner:.azureRunnerReferenceDigest,gitlabRunner:.gitlabRunnerReferenceDigest}' "$root"/real-*/candidate.json)
 fi
 jq -s --arg deterministic "$deterministic" --arg candidateMatched "$candidate_matched_arg" --argjson candidate "$candidate_json" '
   {providers: ., deterministicQualification:$deterministic, candidateMatched:($candidateMatched == "true"), candidate:$candidate}

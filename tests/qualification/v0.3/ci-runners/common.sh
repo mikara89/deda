@@ -92,11 +92,11 @@ replicas() { docker service inspect "$(service "$1")" --format '{{.Spec.Mode.Rep
 running_tasks() { docker service ps "$(service "$1")" --filter desired-state=running --format '{{.CurrentState}}' 2>/dev/null | grep -c '^Running' || true; }
 wait_replicas() {
   local name=$1 expected=$2
-  wait_until "$(service "$name") desired replicas=$expected" 90 bash -c "[[ \"\$(docker service inspect '$(service "$name")' --format '{{.Spec.Mode.Replicated.Replicas}}' 2>/dev/null || true)\" == '$expected' ]" || fail_scenario "timed out waiting for $(service "$name") desired replicas=$expected"
+  wait_until "$(service "$name") desired replicas=$expected" 90 bash -c "[[ \"\$(docker service inspect '$(service "$name")' --format '{{.Spec.Mode.Replicated.Replicas}}' 2>/dev/null || true)\" == '$expected' ]]" || fail_scenario "timed out waiting for $(service "$name") desired replicas=$expected"
 }
 wait_running_tasks() {
   local name=$1 expected=$2
-  wait_until "$(service "$name") running tasks=$expected" 180 bash -c "[[ \"\$(docker service ps '$(service "$name")' --filter desired-state=running --format '{{.CurrentState}}' 2>/dev/null | grep -c '^Running' || true)\" == '$expected' ]" || fail_scenario "timed out waiting for $(service "$name") running tasks=$expected"
+  wait_until "$(service "$name") running tasks=$expected" 180 bash -c "[[ \"\$(docker service ps '$(service "$name")' --filter desired-state=running --format '{{.CurrentState}}' 2>/dev/null | grep -c '^Running' || true)\" == '$expected' ]]" || fail_scenario "timed out waiting for $(service "$name") running tasks=$expected"
 }
 
 simulator_url() { printf 'http://%s:8081' "$(service simulator)"; }

@@ -10,7 +10,7 @@ init_run
 on_exit() {
   local status=$?
   capture_diagnostics_to "$(result_root)"
-  if (( status != 0 )); then "$SCRIPT_DIR/collect-evidence.sh" --run "$RUN_ID" || true; fi
+  if (( status != 0 )); then bash "$SCRIPT_DIR/collect-evidence.sh" --run "$RUN_ID" || true; fi
   cleanup_stack
   exit "$status"
 }
