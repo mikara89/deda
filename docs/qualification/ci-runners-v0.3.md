@@ -34,15 +34,20 @@ successful dispatch alone is not evidence of a PASS. Each real-provider harness
 also deploys a dedicated Swarm stack with the runner registration file,
 verifies the DEDA-managed runner service starts at zero, observes `0 → N`,
 captures running tasks while provider jobs are active, and then verifies the
-service drains back to zero.
+service drains back to zero. Provider job identities are correlated to those
+Swarm tasks rather than accepted as unrelated self-hosted capacity. Real
+qualification requires digest-pinned DEDA and runner images, and `run-all.sh`
+refuses `PASS` unless the deterministic and real manifests share the same
+candidate commit and DEDA image ID.
 
 ## Runner lifecycle and safety
 
 DEDA only changes desired replica count; Swarm may choose a busy task when it
 scales down. The runner images therefore own graceful draining: GitHub's busy
 hook preserves its ephemeral job, Azure runs one job through `run.sh --once`,
-and GitLab receives `SIGQUIT` for graceful drain. The deterministic suite runs
-the runner lifecycle contract repeatedly and retains the logs as evidence.
+and GitLab receives `SIGQUIT` for graceful drain. Full deterministic mode runs
+the runner lifecycle contract repeatedly and performs three real Swarm
+`5 → 0` drain cycles per provider.
 
 The GitHub job-started hook has a narrow dispatch race near termination. The
 qualification treats any observed active-job cancellation as a failure and

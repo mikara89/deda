@@ -9,8 +9,8 @@ capture_diagnostics_to "$root"
 commit=$(git rev-parse HEAD)
 printf '%s\n' "$commit" > "$root/candidate-commit.txt"
 git status --short > "$root/worktree-status.txt"
-jq -n --arg runId "$RUN_ID" --arg collectedAt "$(utc_now)" --arg candidateCommit "$commit" --arg candidateImage "$DEDA_IMAGE" \
-  '{runId:$runId,qualification:"v0.3-ci",collectedAt:$collectedAt,candidateCommit:$candidateCommit,candidateImage:$candidateImage,containsSecrets:false}' > "$root/manifest.json"
+jq -n --arg runId "$RUN_ID" --arg collectedAt "$(utc_now)" --arg candidateCommit "$commit" --arg candidateImage "$DEDA_IMAGE" --arg dedaImageDigest "$(image_digest "$DEDA_IMAGE")" \
+  '{runId:$runId,qualification:"v0.3-ci",collectedAt:$collectedAt,candidateCommit:$candidateCommit,candidateImage:$candidateImage,dedaImageDigest:$dedaImageDigest,containsSecrets:false}' > "$root/manifest.json"
 for id in 01 02 03 04 05 06 07 08 09 10; do
   dir="$root/scenario-$id"
   mkdir -p "$dir"

@@ -17,23 +17,26 @@ for provider in github azure gitlab; do
     azure) state='{"azure":{"jobs":[{"demands":["deda","Agent.OS -equals Linux"],"assignTime":"2026-01-01T00:00:00Z","finishTime":null},{"demands":["deda","Agent.OS -equals Linux"],"assignTime":"2026-01-01T00:00:00Z","finishTime":null},{"demands":["deda","Agent.OS -equals Linux"],"assignTime":"2026-01-01T00:00:00Z","finishTime":null},{"demands":["deda","Agent.OS -equals Linux"],"assignTime":"2026-01-01T00:00:00Z","finishTime":null},{"demands":["deda","Agent.OS -equals Linux"],"assignTime":"2026-01-01T00:00:00Z","finishTime":null}]}}'; clear='{"azure":{"jobs":[]}}' ;;
     gitlab) state='{"gitlab":{"jobs":[{"status":"running","tag_list":["linux","deda"]},{"status":"running","tag_list":["linux","deda"]},{"status":"running","tag_list":["linux","deda"]},{"status":"running","tag_list":["linux","deda"]},{"status":"running","tag_list":["linux","deda"]}]}}'; clear='{"gitlab":{"jobs":[]}}' ;;
   esac
-  set_state "$state"; wait_replicas "$service_name" 5; wait_running_tasks "$service_name" 5
-  set_state "$clear"; wait_replicas "$service_name" 0; wait_running_tasks "$service_name" 0
-  docker service logs --raw "$(service "$service_name")" > "$SCENARIO_DIR/$provider-swarm-drain.log" 2>&1 || fail_scenario "could not collect $provider drain log"
-  case "$provider" in
-    github)
-      grep -Fq 'preserving the active ephemeral job' "$SCENARIO_DIR/$provider-swarm-drain.log" || fail_scenario 'GitHub busy-hook protection did not engage'
-      grep -Fq 'runner exited during drain' "$SCENARIO_DIR/$provider-swarm-drain.log" || fail_scenario 'GitHub runner did not finish during drain'
-      ;;
-    azure)
-      grep -Fq 'one-job agent exited during drain' "$SCENARIO_DIR/$provider-swarm-drain.log" || fail_scenario 'Azure one-job agent did not finish during drain'
-      ;;
-    gitlab)
-      grep -Fq 'completed-after-drain' "$SCENARIO_DIR/$provider-swarm-drain.log" || fail_scenario 'GitLab runner did not complete after SIGQUIT drain'
-      ;;
-  esac
+  for drain_run in $(seq 1 3); do
+    set_state "$state"; wait_replicas "$service_name" 5; wait_running_tasks "$service_name" 5
+    set_state "$clear"; wait_replicas "$service_name" 0; wait_running_tasks "$service_name" 0
+    log_file="$SCENARIO_DIR/$provider-swarm-drain-$drain_run.log"
+    docker service logs --raw "$(service "$service_name")" > "$log_file" 2>&1 || fail_scenario "could not collect $provider drain run $drain_run log"
+    case "$provider" in
+      github)
+        grep -Fq 'preserving the active ephemeral job' "$log_file" || fail_scenario "GitHub busy-hook protection did not engage on drain run $drain_run"
+        grep -Fq 'runner exited during drain' "$log_file" || fail_scenario "GitHub runner did not finish during drain run $drain_run"
+        ;;
+      azure)
+        grep -Fq 'one-job agent exited during drain' "$log_file" || fail_scenario "Azure one-job agent did not finish during drain run $drain_run"
+        ;;
+      gitlab)
+        grep -Fq 'completed-after-drain' "$log_file" || fail_scenario "GitLab runner did not complete after SIGQUIT drain run $drain_run"
+        ;;
+    esac
+  done
 done
 if grep -R -F 'cancelled' "$SCENARIO_DIR" >/dev/null; then
   fail_scenario 'an active CI job was cancelled'
 fi
-finish_scenario PASS 'five wrapper iterations and real PR10 wrappers in Swarm 5→0 drains passed for GitHub busy hook, Azure --once, and GitLab SIGQUIT'
+finish_scenario PASS 'five wrapper iterations and three real PR10 wrapper Swarm 5→0 drains per provider passed for GitHub busy hook, Azure --once, and GitLab SIGQUIT'

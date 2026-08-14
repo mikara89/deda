@@ -24,3 +24,8 @@ runner images. The fake provider binaries keep the API interaction
 deterministic while Swarm still signals the actual GitHub, Azure, and GitLab
 runner entrypoints, so active-job protection is exercised under the same
 wrapper/PID1 path used by the release images.
+
+Full mode runs three real Swarm `5 → 0` drain cycles per provider. Real-provider
+qualification requires digest-pinned DEDA and runner images and binds its
+evidence to the deterministic candidate commit and image ID before `PASS` is
+allowed.

@@ -22,6 +22,7 @@ export DEDA_QUAL_STACK QUAL_SECRET_PREFIX DEDA_IMAGE CI_SIMULATOR_IMAGE CI_RUNNE
 export GITHUB_RUNNER_QUALIFICATION_IMAGE AZURE_RUNNER_QUALIFICATION_IMAGE GITLAB_RUNNER_QUALIFICATION_IMAGE
 
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+image_digest() { docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 note() { printf '[v0.3 qualification] %s\n' "$*"; }
 require() { command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"; }
@@ -118,12 +119,12 @@ wait_for_all_provider_observations_after() {
 redis_leader() { docker run --rm --network "${DEDA_QUAL_STACK}_control" redis:7-alpine redis-cli -h "$(service redis)" --raw GET deda-v03-qualification:leader 2>/dev/null || true; }
 
 deda_leader_task() {
-  local owner=$1 task host container
+  local owner=$1 task container host
   while IFS= read -r task; do
-    host=$(docker inspect --format '{{.Config.Hostname}}' "$task" 2>/dev/null || true)
+    container=$(docker inspect --format '{{.Status.ContainerStatus.ContainerID}}' "$task" 2>/dev/null || true)
+    [[ -n "$container" ]] || continue
+    host=$(docker inspect --format '{{.Config.Hostname}}' "$container" 2>/dev/null || true)
     if [[ "$owner" == "$host"* ]]; then
-      container=$(docker inspect --format '{{.Status.ContainerStatus.ContainerID}}' "$task" 2>/dev/null || true)
-      [[ -n "$container" ]] || return 1
       printf '%s\n' "$container"
       return 0
     fi

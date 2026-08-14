@@ -3,8 +3,6 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 QUAL_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 source "$QUAL_ROOT/common.sh"
-: "${REAL_DEDA_IMAGE:=ghcr.io/mikara89/deda:v0.3.0}"
-export DEDA_IMAGE="$REAL_DEDA_IMAGE"
 
 confirm_real() {
   [[ ${1:-} == --confirm-real-provider-tests ]] || die 'Real-provider qualification requires --confirm-real-provider-tests; credentials alone are never authorization.'
@@ -12,6 +10,34 @@ confirm_real() {
 require_env() { [[ -n ${!1:-} ]] || die "$1 is required"; }
 require_secret_file() { [[ -f ${!1:-} && -r ${!1} ]] || die "$1 must name a readable secret file"; }
 secret() { tr -d '\r\n' < "$1"; }
+require_digest_image() {
+  local name=$1 value=${!1:-}
+  [[ -n "$value" ]] || die "$name is required and must be digest-pinned"
+  [[ "$value" == *@sha256:* ]] || die "$name must use an immutable digest reference (image@sha256:...), got: $value"
+}
+export_real_candidate_images() {
+  require_digest_image REAL_DEDA_IMAGE
+  require_digest_image GITHUB_QUAL_RUNNER_IMAGE
+  require_digest_image AZURE_QUAL_RUNNER_IMAGE
+  require_digest_image GITLAB_QUAL_RUNNER_IMAGE
+  export DEDA_IMAGE="$REAL_DEDA_IMAGE"
+  export GITHUB_RUNNER_IMAGE="$GITHUB_QUAL_RUNNER_IMAGE"
+  export AZURE_RUNNER_IMAGE="$AZURE_QUAL_RUNNER_IMAGE"
+  export GITLAB_RUNNER_IMAGE="$GITLAB_QUAL_RUNNER_IMAGE"
+}
+image_digest() {
+  docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true
+}
+write_real_candidate() {
+  local provider=$1 file
+  file="$(real_result_dir "$provider")/candidate.json"
+  jq -n --arg provider "$provider" --arg collectedAt "$(utc_now)" --arg candidateCommit "$(git rev-parse HEAD)" \
+    --arg dedaImage "$DEDA_IMAGE" --arg dedaDigest "$(image_digest "$DEDA_IMAGE")" \
+    --arg githubRunnerImage "$GITHUB_RUNNER_IMAGE" --arg githubRunnerDigest "$(image_digest "$GITHUB_RUNNER_IMAGE")" \
+    --arg azureRunnerImage "$AZURE_RUNNER_IMAGE" --arg azureRunnerDigest "$(image_digest "$AZURE_RUNNER_IMAGE")" \
+    --arg gitlabRunnerImage "$GITLAB_RUNNER_IMAGE" --arg gitlabRunnerDigest "$(image_digest "$GITLAB_RUNNER_IMAGE")" \
+    '{provider:$provider,collectedAt:$collectedAt,candidateCommit:$candidateCommit,dedaImage:$dedaImage,dedaDigest:$dedaDigest,githubRunnerImage:$githubRunnerImage,githubRunnerDigest:$githubRunnerDigest,azureRunnerImage:$azureRunnerImage,azureRunnerDigest:$azureRunnerDigest,gitlabRunnerImage:$gitlabRunnerImage,gitlabRunnerDigest:$gitlabRunnerDigest,containsSecrets:false}' > "$file"
+}
 real_result_dir() { printf '%s/real-%s' "$(result_root)" "$1"; }
 begin_real() { mkdir -p "$(real_result_dir "$1")"; }
 write_real() {
@@ -47,7 +73,8 @@ require_docker_swarm() {
 }
 
 host_from_url() {
-  local url=$1 host=${url#*://}
+  local url=$1
+  local host=${url#*://}
   host=${host%%/*}
   host=${host%%:*}
   printf '%s\n' "$host"
@@ -117,6 +144,59 @@ capture_real_swarm_evidence() {
   docker run --rm --network "${stack}_deda_net" curlimages/curl:8.10.1 -fsS "http://$deda_service:8080/metrics" > "$dir/deda-metrics.txt" 2>&1 || true
 }
 
+capture_real_runner_hostnames() {
+  local service_name=$1 task container host
+  while IFS= read -r task; do
+    container=$(docker inspect --format '{{.Status.ContainerStatus.ContainerID}}' "$task" 2>/dev/null || true)
+    [[ -n "$container" ]] || continue
+    host=$(docker inspect --format '{{.Config.Hostname}}' "$container" 2>/dev/null || true)
+    [[ -n "$host" ]] && printf '%s\n' "$host"
+  done < <(docker service ps --no-trunc "$service_name" --filter desired-state=running --format '{{.ID}}')
+}
+
+capture_gitlab_runner_names() {
+  local service_name=$1 slot task full_name short_name
+  while read -r slot task; do
+    [[ -n "$slot" && -n "$task" ]] || continue
+    full_name="deda-gitlab-${slot}-${task}"
+    short_name="deda-gitlab-${slot}-${task:0:12}"
+    printf '%s\n' "$full_name"
+    printf '%s\n' "$short_name"
+  done < <(docker service ps --no-trunc "$service_name" --filter desired-state=running --format '{{.Slot}} {{.ID}}')
+}
+
+assert_github_runner_attribution() {
+  local dir=$1 hostfile=$2 name host
+  [[ -s "$hostfile" ]] || die 'No running GitHub qualification task hostnames were captured'
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    host=${name#deda-gh-}
+    [[ "$host" != "$name" ]] || die "GitHub runner name '$name' does not use the DEDA runner naming scheme"
+    grep -Fxq "$host" "$hostfile" || die "GitHub runner '$name' was not created by the qualification Swarm service"
+  done < <(jq -r '.jobs[]?.runner_name // ""' "$dir"/run-*.json | sort -u)
+}
+
+assert_azure_agent_attribution() {
+  local dir=$1 hostfile=$2 agent host
+  [[ -s "$hostfile" ]] || die 'No running Azure qualification task hostnames were captured'
+  [[ -s "$dir/agent-names.txt" ]] || die 'No Azure pipeline agent identities were captured'
+  while IFS= read -r agent; do
+    [[ -n "$agent" ]] || continue
+    host=${agent#deda-ado-}
+    [[ "$host" != "$agent" ]] || die "Azure agent name '$agent' does not use the DEDA agent naming scheme"
+    grep -Fxq "$host" "$hostfile" || die "Azure agent '$agent' was not created by the qualification Swarm service"
+  done < <(sort -u "$dir/agent-names.txt")
+}
+
+assert_gitlab_runner_attribution() {
+  local dir=$1 namesfile=$2 name
+  [[ -s "$namesfile" ]] || die 'No running GitLab qualification runner names were captured'
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    grep -Fxq "$name" "$namesfile" || die "GitLab runner '$name' was not created by the qualification Swarm service"
+  done < <(jq -r '.jobs[]? | (.runner.name // .runner.description // "")' "$dir"/pipeline-*.json | sort -u)
+}
+
 teardown_real_stack() {
   local tmpdir=$1 stack=$2
   shift 2
@@ -150,7 +230,7 @@ deploy_github_stack() {
     "$REPO_ROOT/examples/ci-runners/github-actions/credential-policy.example.json" > "$policy"
   create_real_secret "${stack}-github-queue-reader" "$GITHUB_QUAL_QUEUE_TOKEN_FILE"
   create_real_secret "${stack}-github-runner-admin" "$GITHUB_QUAL_RUNNER_ADMIN_TOKEN_FILE"
-  export GITHUB_RUNNER_IMAGE=${GITHUB_QUAL_RUNNER_IMAGE:-ghcr.io/mikara89/deda-github-runner:v0.3.0}
+  export GITHUB_RUNNER_IMAGE="$GITHUB_QUAL_RUNNER_IMAGE"
   export DEDA_IMAGE="$REAL_DEDA_IMAGE"
   docker stack deploy --prune -c "$compose" "$stack" >/dev/null
   docker service update --label-add "com.deda.autoscale.trigger.apiUrl=$api" "$(real_service "$stack" github-runner)" >/dev/null
@@ -181,7 +261,7 @@ deploy_azure_stack() {
     "$REPO_ROOT/examples/ci-runners/azure-pipelines/credential-policy.example.json" > "$policy"
   create_real_secret "${stack}-ado-queue-reader" "$AZURE_QUAL_QUEUE_TOKEN_FILE"
   create_real_secret "${stack}-ado-agent-registration" "$AZURE_QUAL_AGENT_TOKEN_FILE"
-  export AZURE_RUNNER_IMAGE=${AZURE_QUAL_RUNNER_IMAGE:-ghcr.io/mikara89/deda-azure-runner:v0.3.0}
+  export AZURE_RUNNER_IMAGE="$AZURE_QUAL_RUNNER_IMAGE"
   export DEDA_IMAGE="$REAL_DEDA_IMAGE"
   docker stack deploy --prune -c "$compose" "$stack" >/dev/null
   wait_real "$stack DEDA readiness" 180 bash -c "docker run --rm --network '${stack}_deda_net' curlimages/curl:8.10.1 -fsS 'http://$(real_service "$stack" deda):8080/health/ready' >/dev/null" || die 'real Azure qualification DEDA did not become ready'
@@ -210,7 +290,7 @@ deploy_gitlab_stack() {
     "$REPO_ROOT/examples/ci-runners/gitlab/credential-policy.example.json" > "$policy"
   create_real_secret "${stack}-gitlab-queue-reader" "$GITLAB_QUAL_QUEUE_TOKEN_FILE"
   create_real_secret "${stack}-gitlab-runner-auth" "$GITLAB_QUAL_RUNNER_TOKEN_FILE"
-  export GITLAB_RUNNER_IMAGE=${GITLAB_QUAL_RUNNER_IMAGE:-ghcr.io/mikara89/deda-gitlab-runner:v0.3.0}
+  export GITLAB_RUNNER_IMAGE="$GITLAB_QUAL_RUNNER_IMAGE"
   export DEDA_IMAGE="$REAL_DEDA_IMAGE"
   docker stack deploy --prune -c "$compose" "$stack" >/dev/null
   wait_real "$stack DEDA readiness" 180 bash -c "docker run --rm --network '${stack}_deda_net' curlimages/curl:8.10.1 -fsS 'http://$(real_service "$stack" deda):8080/health/ready' >/dev/null" || die 'real GitLab qualification DEDA did not become ready'

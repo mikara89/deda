@@ -4,6 +4,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 confirm_real "${1:-}"
 for key in GITHUB_QUAL_OWNER GITHUB_QUAL_REPOSITORY GITHUB_QUAL_WORKFLOW GITHUB_QUAL_QUEUE_TOKEN_FILE GITHUB_QUAL_RUNNER_ADMIN_TOKEN_FILE; do require_env "$key"; done
 require_secret_file GITHUB_QUAL_QUEUE_TOKEN_FILE; require_secret_file GITHUB_QUAL_RUNNER_ADMIN_TOKEN_FILE
+export_real_candidate_images
 init_run
 begin_real github
 api=${GITHUB_QUAL_API_URL:-https://api.github.com}; ref=${GITHUB_QUAL_REF:-main}; count=${GITHUB_QUAL_JOB_COUNT:-3}; timeout=${GITHUB_QUAL_TIMEOUT_SECONDS:-1800}
@@ -12,8 +13,10 @@ stack=${REAL_GITHUB_STACK:-deda-real-github}
 service_name=$(real_service "$stack" github-runner)
 tmpdir=$(mktemp -d)
 timeline="$(real_result_dir github)/swarm-scale-timeline.ndjson"
+hostfile="$(real_result_dir github)/swarm-runner-hostnames.txt"
 trap 'teardown_real_stack "$tmpdir" "$stack" "${stack}-github-queue-reader" "${stack}-github-runner-admin"' EXIT
 deploy_github_stack "$tmpdir"
+write_real_candidate github
 wait_real_desired "$service_name" 0 'initial GitHub runner service at zero'
 record_scale "$timeline" "$service_name" github
 token=$(secret "$GITHUB_QUAL_QUEUE_TOKEN_FILE")
@@ -34,6 +37,7 @@ while (( ${#run_ids[@]} < count )); do
 done
 wait_real_desired_positive "$service_name" 'GitHub runner service scaled up for dispatched jobs'
 wait_real_running_positive "$service_name" 'GitHub runner tasks started for dispatched jobs'
+capture_real_runner_hostnames "$service_name" > "$hostfile"
 record_scale "$timeline" "$service_name" github
 for id in "${run_ids[@]}"; do
   run_file="$(real_result_dir github)/run-$id.json"
@@ -50,6 +54,7 @@ for id in "${run_ids[@]}"; do
 done
 unset token
 unset dispatch_body
+assert_github_runner_attribution "$(real_result_dir github)" "$hostfile"
 wait_real_desired "$service_name" 0 'GitHub runner service scaled back to zero'
 wait_real_running_zero "$service_name" 'GitHub runner tasks drained to zero'
 record_scale "$timeline" "$service_name" github
