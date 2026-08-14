@@ -102,78 +102,78 @@ namespace Deda.Controller
             ct.ThrowIfCancellationRequested();
 
             try
+            {
+                using var serviceOperation = _telemetry.StartOperation("service evaluation", svc.Name);
+
+                if (svc.Mode == SwarmServiceMode.Global)
                 {
-                    using var serviceOperation = _telemetry.StartOperation("service evaluation", svc.Name);
+                    RemoveManagedService(svc.ServiceId, svc.Name);
+                    return;
+                }
 
-                    if (svc.Mode == SwarmServiceMode.Global)
-                    {
-                        RemoveManagedService(svc.ServiceId, svc.Name);
-                        return;
-                    }
+                var cfg = _configProvider.TryGetConfig(svc, out var cfgError);
+                if (cfg is null)
+                {
+                    RemoveManagedService(svc.ServiceId, svc.Name);
+                    if (!string.IsNullOrWhiteSpace(cfgError))
+                        _telemetry.RecordError(svc.Name, "config", new InvalidOperationException(cfgError));
+                    return;
+                }
 
-                    var cfg = _configProvider.TryGetConfig(svc, out var cfgError);
-                    if (cfg is null)
-                    {
-                        RemoveManagedService(svc.ServiceId, svc.Name);
-                        if (!string.IsNullOrWhiteSpace(cfgError))
-                            _telemetry.RecordError(svc.Name, "config", new InvalidOperationException(cfgError));
-                        return;
-                    }
-
-                    if (!_triggers.TryResolve(cfg.TriggerType, out var adapter))
-                    {
-                        RemoveManagedService(svc.ServiceId, svc.Name);
-                        _telemetry.RecordError(
-                            svc.Name,
-                            "trigger",
-                            new InvalidOperationException($"Unknown trigger type '{cfg.TriggerType}'."));
-                        return;
-                    }
-
-                    TrackManagedService(svc, cfg.TriggerType);
-
-                    var state = _stateStore.GetOrAdd(svc.ServiceId);
-
-                    TriggerResult trigger;
-                    var triggerStarted = Stopwatch.GetTimestamp();
-                    using (_telemetry.StartOperation("trigger", svc.Name, cfg.TriggerType))
-                    {
-                        trigger = await adapter.GetWorkAsync(svc, cfg, ct).ConfigureAwait(false);
-                    }
-                    _telemetry.RecordTrigger(
+                if (!_triggers.TryResolve(cfg.TriggerType, out var adapter))
+                {
+                    RemoveManagedService(svc.ServiceId, svc.Name);
+                    _telemetry.RecordError(
                         svc.Name,
-                        cfg.TriggerType,
-                        Stopwatch.GetElapsedTime(triggerStarted),
-                        trigger);
+                        "trigger",
+                        new InvalidOperationException($"Unknown trigger type '{cfg.TriggerType}'."));
+                    return;
+                }
 
-                    ScaleDecision decision;
-                    using (_telemetry.StartOperation("scale decision", svc.Name, cfg.TriggerType))
+                TrackManagedService(svc, cfg.TriggerType);
+
+                var state = _stateStore.GetOrAdd(svc.ServiceId);
+
+                TriggerResult trigger;
+                var triggerStarted = Stopwatch.GetTimestamp();
+                using (_telemetry.StartOperation("trigger", svc.Name, cfg.TriggerType))
+                {
+                    trigger = await adapter.GetWorkAsync(svc, cfg, ct).ConfigureAwait(false);
+                }
+                _telemetry.RecordTrigger(
+                    svc.Name,
+                    cfg.TriggerType,
+                    Stopwatch.GetElapsedTime(triggerStarted),
+                    trigger);
+
+                ScaleDecision decision;
+                using (_telemetry.StartOperation("scale decision", svc.Name, cfg.TriggerType))
+                {
+                    decision = _policy.Decide(svc, cfg, trigger, state, now);
+                }
+                _telemetry.RecordDecision(decision);
+
+                if (decision.DesiredReplicas != decision.CurrentReplicas)
+                {
+                    // Re-check immediately before the mutating call. The Redis
+                    // heartbeat can revoke leadership during a long trigger request.
+                    if (_leader is not null &&
+                        !await _leader.IsLeaderAsync(ct).ConfigureAwait(false))
+                        return;
+
+                    using (_telemetry.StartOperation("update replicas", svc.Name, cfg.TriggerType))
                     {
-                        decision = _policy.Decide(svc, cfg, trigger, state, now);
+                        await _updates.ApplyDesiredReplicasAsync(_swarm, svc, decision.DesiredReplicas, ct)
+                            .ConfigureAwait(false);
                     }
-                    _telemetry.RecordDecision(decision);
 
-                    if (decision.DesiredReplicas != decision.CurrentReplicas)
-                    {
-                        // Re-check immediately before the mutating call. The Redis
-                        // heartbeat can revoke leadership during a long trigger request.
-                        if (_leader is not null &&
-                            !await _leader.IsLeaderAsync(ct).ConfigureAwait(false))
-                            return;
+                    if (decision.DesiredReplicas > decision.CurrentReplicas)
+                        state.LastScaleUpUtc = now;
+                    else
+                        state.LastScaleDownUtc = now;
 
-                        using (_telemetry.StartOperation("update replicas", svc.Name, cfg.TriggerType))
-                        {
-                            await _updates.ApplyDesiredReplicasAsync(_swarm, svc, decision.DesiredReplicas, ct)
-                                .ConfigureAwait(false);
-                        }
-
-                        if (decision.DesiredReplicas > decision.CurrentReplicas)
-                            state.LastScaleUpUtc = now;
-                        else
-                            state.LastScaleDownUtc = now;
-
-                        state.LastAppliedReplicas = decision.DesiredReplicas;
-                    }
+                    state.LastAppliedReplicas = decision.DesiredReplicas;
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -193,12 +193,16 @@ namespace Deda.Controller
 
         private void TrackManagedService(ServiceRef service, string triggerType)
         {
-            if (_managedServices.TryGetValue(service.ServiceId, out var previous) &&
-                (!string.Equals(previous.Name, service.Name, StringComparison.Ordinal) ||
-                 !string.Equals(previous.TriggerType, triggerType, StringComparison.OrdinalIgnoreCase)))
+            if (_managedServices.TryGetValue(service.ServiceId, out var previous))
             {
-                _telemetry.RemoveService(service.ServiceId, previous.Name);
-                NotifyServiceRemoved(service.ServiceId, previous.Name);
+                var triggerChanged = !string.Equals(previous.TriggerType, triggerType, StringComparison.OrdinalIgnoreCase);
+                if (!string.Equals(previous.Name, service.Name, StringComparison.Ordinal) || triggerChanged)
+                {
+                    if (triggerChanged)
+                        _stateStore.Remove(service.ServiceId);
+                    _telemetry.RemoveService(service.ServiceId, previous.Name);
+                    NotifyServiceRemoved(service.ServiceId, previous.Name);
+                }
             }
 
             _managedServices[service.ServiceId] = new(service.Name, triggerType);

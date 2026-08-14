@@ -42,12 +42,16 @@ public sealed class CredentialPolicy
         return new(bindings);
     }
 
-    public CredentialBinding Resolve(ServiceRef service, string reference, Uri endpoint, string? expectedType = null)
+    public CredentialBinding Resolve(ServiceRef service, string reference, Uri endpoint, string? expectedType = null, bool allowLegacyUntyped = false)
     {
         if (!_bindings.TryGetValue(reference, out var binding))
             throw new InvalidOperationException($"Credential reference '{reference}' is not defined by the operator policy.");
-        if (!string.IsNullOrWhiteSpace(expectedType) && !string.Equals(binding.Type, expectedType, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"Credential reference '{reference}' is not a '{expectedType}' credential.");
+        if (!string.IsNullOrWhiteSpace(expectedType))
+        {
+            var legacyUntyped = allowLegacyUntyped && string.IsNullOrWhiteSpace(binding.Type);
+            if (!legacyUntyped && !string.Equals(binding.Type, expectedType, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Credential reference '{reference}' is not a '{expectedType}' credential.");
+        }
         if (binding.AllowedHosts.Count == 0)
             throw new InvalidOperationException($"Credential reference '{reference}' must define at least one allowed host.");
         if (!binding.AllowedHosts.Contains(endpoint.Host))

@@ -174,6 +174,26 @@ public sealed class AutoscalerControllerTests
     }
 
     [Fact]
+    public async Task Reconcile_TriggerTypeChangeReplacesIncompatibleScaleState()
+    {
+        var fixture = new Fixture();
+        var service = Service("worker");
+        fixture.Swarm.Services = [service];
+        fixture.Registry.Adapter = new FakeAdapter((_, _, _) => Task.FromResult(TriggerResult.Ok(0)));
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+        var previous = fixture.StateStore.GetOrAdd(service.ServiceId);
+        previous.LastAppliedReplicas = 19;
+
+        fixture.Config.Config = ValidConfig() with { TriggerType = "second" };
+        fixture.Registry.Adapter = new FakeAdapter((_, _, _) => Task.FromResult(TriggerResult.Ok(0)), "second");
+        await fixture.Controller.ReconcileOnceAsync(CancellationToken.None);
+
+        var replacement = fixture.StateStore.GetOrAdd(service.ServiceId);
+        Assert.NotSame(previous, replacement);
+        Assert.Contains(service.ServiceId, fixture.StateStore.RemovedKeys);
+    }
+
+    [Fact]
     public async Task Reconcile_UnknownTriggerRemovesPreviouslyManagedService()
     {
         var fixture = new Fixture();
@@ -431,12 +451,13 @@ public sealed class AutoscalerControllerTests
     {
         private readonly Func<ServiceRef, ScaleConfig, CancellationToken, Task<TriggerResult>> _handler;
 
-        public FakeAdapter(Func<ServiceRef, ScaleConfig, CancellationToken, Task<TriggerResult>> handler)
+        public FakeAdapter(Func<ServiceRef, ScaleConfig, CancellationToken, Task<TriggerResult>> handler, string type = "fake")
         {
             _handler = handler;
+            Type = type;
         }
 
-        public string Type => "fake";
+        public string Type { get; }
 
         public int CallCount { get; private set; }
 
@@ -473,6 +494,7 @@ public sealed class AutoscalerControllerTests
     private sealed class FakeStateStore : IStateStore<string, ServiceScaleState>
     {
         private readonly Dictionary<string, ServiceScaleState> _states = [];
+        public List<string> RemovedKeys { get; } = [];
 
         public ServiceScaleState GetOrAdd(string key)
         {
@@ -485,7 +507,11 @@ public sealed class AutoscalerControllerTests
             return state;
         }
 
-        public void Remove(string key) => _states.Remove(key);
+        public void Remove(string key)
+        {
+            RemovedKeys.Add(key);
+            _states.Remove(key);
+        }
     }
 
     private sealed class RecordingTelemetry : IAutoscalerTelemetry

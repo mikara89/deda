@@ -87,6 +87,46 @@ public sealed class CiProviderHardeningTests
     }
 
     [Fact]
+    public async Task ConfigurationReplacement_InvalidatesTheSingleServiceCacheSlot()
+    {
+        var requests = 0;
+        var cache = new CiObservationCache();
+        var adapter = GitLab(Factory(_ =>
+        {
+            requests++;
+            return StubHttpMessageHandler.Json("[]");
+        }), cache);
+        var first = GitLabConfig(("projects", "group/first"));
+        var second = GitLabConfig(("projects", "group/second"));
+
+        await adapter.GetWorkAsync(Service(), first, CancellationToken.None);
+        await adapter.GetWorkAsync(Service(), first, CancellationToken.None);
+        await adapter.GetWorkAsync(Service(), second, CancellationToken.None);
+        await adapter.GetWorkAsync(Service(), first, CancellationToken.None);
+
+        Assert.Equal(3, requests);
+    }
+
+    [Fact]
+    public async Task ServiceLifecycleRemoval_EvictsCachedObservation()
+    {
+        var requests = 0;
+        var cache = new CiObservationCache();
+        var adapter = GitLab(Factory(_ =>
+        {
+            requests++;
+            return StubHttpMessageHandler.Json("[]");
+        }), cache);
+        var config = GitLabConfig();
+
+        await adapter.GetWorkAsync(Service(), config, CancellationToken.None);
+        new CiTelemetryLifecycle(cache).RemoveService(Service().ServiceId, Service().Name);
+        await adapter.GetWorkAsync(Service(), config, CancellationToken.None);
+
+        Assert.Equal(2, requests);
+    }
+
+    [Fact]
     public async Task GitLab_UsesCaseSensitiveSubsetMatchingAndPaginates()
     {
         var adapter = GitLab(Factory(request => request.RequestUri!.Query.EndsWith("page=1", StringComparison.Ordinal)
@@ -147,9 +187,53 @@ public sealed class CiProviderHardeningTests
         Assert.Contains("TaskCanceledException", result.Error);
     }
 
-    private static GitHubActionsTriggerAdapter GitHub(IHttpClientFactory factory) => new(new GitHubActionsQueueProvider(factory, Tokens("github", "api.github.com")));
-    private static GitLabCiTriggerAdapter GitLab(IHttpClientFactory factory) => new(new GitLabCiQueueProvider(factory, Tokens("gitlab", "gitlab.com")));
-    private static AzurePipelinesTriggerAdapter Azure(IHttpClientFactory factory) => new(new AzurePipelinesQueueProvider(factory, Tokens("azure-devops", "dev.azure.com")));
+    [Fact]
+    public async Task GitHub_MalformedWorkflowRunFailsObservation()
+    {
+        var adapter = GitHub(Factory(_ => StubHttpMessageHandler.Json("""{"workflow_runs":[{}]}""")));
+
+        var result = await adapter.GetWorkAsync(Service(), GitHubConfig(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("property 'id'", result.Error);
+    }
+
+    [Fact]
+    public async Task GitLab_MalformedJobFailsObservation()
+    {
+        var adapter = GitLab(Factory(_ => StubHttpMessageHandler.Json("""[{"status":"pending"}]""")));
+
+        var result = await adapter.GetWorkAsync(Service(), GitLabConfig(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("property 'tag_list'", result.Error);
+    }
+
+    [Fact]
+    public async Task AzurePipelines_MalformedJobRequestFailsObservation()
+    {
+        var adapter = Azure(Factory(_ => StubHttpMessageHandler.Json("""{"value":[{"demands":"docker"}]}""")));
+
+        var result = await adapter.GetWorkAsync(Service(), AzureConfig(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("property 'demands'", result.Error);
+    }
+
+    [Fact]
+    public async Task AzurePipelines_OmittedOptionalFieldsRepresentQueuedJobWithoutDemands()
+    {
+        var adapter = Azure(Factory(_ => StubHttpMessageHandler.Json("""{"value":[{}]}""")));
+
+        var result = await adapter.GetWorkAsync(Service(), AzureConfig(), CancellationToken.None);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(1, result.Work);
+    }
+
+    private static GitHubActionsTriggerAdapter GitHub(IHttpClientFactory factory, CiObservationCache? cache = null) => new(new GitHubActionsQueueProvider(factory, Tokens("github", "api.github.com")), cache);
+    private static GitLabCiTriggerAdapter GitLab(IHttpClientFactory factory, CiObservationCache? cache = null) => new(new GitLabCiQueueProvider(factory, Tokens("gitlab", "gitlab.com")), cache);
+    private static AzurePipelinesTriggerAdapter Azure(IHttpClientFactory factory, CiObservationCache? cache = null) => new(new AzurePipelinesQueueProvider(factory, Tokens("azure-devops", "dev.azure.com")), cache);
     private static CredentialTokenProvider Tokens(string type, string host) => new(new TestSecretResolver(), new CredentialPolicy(new Dictionary<string, CredentialBinding> { ["build"] = new(type, "token", new HashSet<string>([host]), new HashSet<string>()) }));
     private static IHttpClientFactory Factory(Func<HttpRequestMessage, HttpResponseMessage> reply) => new SingleClientFactory(new HttpClient(new StubHttpMessageHandler((request, _) => Task.FromResult(reply(request)))));
     private static IHttpClientFactory Factory(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> reply) => new SingleClientFactory(new HttpClient(new StubHttpMessageHandler(reply)));

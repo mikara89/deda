@@ -9,7 +9,7 @@ public sealed record CiQueueSnapshot(int Queued, int Active, DateTimeOffset Obse
     public int RequiredCapacity => checked(Queued + Active);
 }
 
-/// <summary>Coalesces provider polling per effective service configuration.</summary>
+/// <summary>Coalesces provider polling in one bounded slot per provider and service.</summary>
 public sealed class CiObservationCache
 {
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
@@ -17,11 +17,18 @@ public sealed class CiObservationCache
     public async Task<CiQueueSnapshot> GetAsync(string provider, ServiceRef service, ScaleConfig config, Func<CancellationToken, Task<CiQueueSnapshot>> fetch, CancellationToken cancellationToken)
     {
         var refresh = RefreshInterval(config);
-        var key = CacheKey(provider, service, config);
-        var entry = _entries.GetOrAdd(key, _ => new Entry());
+        var fingerprint = ConfigFingerprint(config);
+        var key = CacheKey(provider, service);
+        var entry = _entries.GetOrAdd(key, _ => new Entry(service.ServiceId));
         await entry.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (!string.Equals(entry.ConfigFingerprint, fingerprint, StringComparison.Ordinal))
+            {
+                entry.ConfigFingerprint = fingerprint;
+                entry.Snapshot = null;
+            }
+
             if (entry.Snapshot is { } snapshot && DateTimeOffset.UtcNow - snapshot.ObservedAt < refresh)
                 return snapshot;
 
@@ -33,6 +40,12 @@ public sealed class CiObservationCache
         finally { entry.Gate.Release(); }
     }
 
+    public void RemoveService(string serviceId)
+    {
+        foreach (var entry in _entries.Where(entry => string.Equals(entry.Value.ServiceId, serviceId, StringComparison.Ordinal)).ToArray())
+            _entries.TryRemove(entry.Key, out _);
+    }
+
     private static TimeSpan RefreshInterval(ScaleConfig config)
     {
         if (!config.TriggerConfig.TryGetValue("refreshSeconds", out var raw) || string.IsNullOrWhiteSpace(raw)) return TimeSpan.FromSeconds(15);
@@ -41,19 +54,30 @@ public sealed class CiObservationCache
         return TimeSpan.FromSeconds(seconds);
     }
 
-    private static string CacheKey(string provider, ServiceRef service, ScaleConfig config) =>
-        string.Concat(provider, "|", service.ServiceId, "|", string.Join("|", config.TriggerConfig.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase).Select(x => $"{x.Key}={x.Value}")));
+    private static string CacheKey(string provider, ServiceRef service) =>
+        string.Concat(provider, "|", service.ServiceId);
 
-    private sealed class Entry
+    private static string ConfigFingerprint(ScaleConfig config) =>
+        string.Concat(config.TriggerType, "|", string.Join("|", config.TriggerConfig
+            .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(x => $"{x.Key}={x.Value}")));
+
+    private sealed class Entry(string serviceId)
     {
+        public string ServiceId { get; } = serviceId;
         public SemaphoreSlim Gate { get; } = new(1, 1);
+        public string? ConfigFingerprint { get; set; }
         public CiQueueSnapshot? Snapshot { get; set; }
     }
 }
 
-public sealed class CiTelemetryLifecycle : IServiceLifecycleObserver
+public sealed class CiTelemetryLifecycle(CiObservationCache cache) : IServiceLifecycleObserver
 {
-    public void RemoveService(string serviceId, string serviceName) => CiDiagnostics.RemoveService(serviceName);
+    public void RemoveService(string serviceId, string serviceName)
+    {
+        cache.RemoveService(serviceId);
+        CiDiagnostics.RemoveService(serviceName);
+    }
 }
 
 public static class CiDiagnostics
@@ -63,6 +87,7 @@ public static class CiDiagnostics
     private static readonly Counter<long> ApiRequests = Meter.CreateCounter<long>("deda_ci_api_requests_total");
     private static readonly Counter<long> ApiFailures = Meter.CreateCounter<long>("deda_ci_api_failures_total");
     private static readonly Counter<long> Observations = Meter.CreateCounter<long>("deda_ci_observations_total");
+    private static readonly Counter<long> ObservationFailures = Meter.CreateCounter<long>("deda_ci_observation_failures_total");
     private static readonly ConcurrentDictionary<string, (string Provider, string Service, CiQueueSnapshot Snapshot)> Snapshots = new(StringComparer.Ordinal);
     private static readonly ObservableGauge<int> Queued = Meter.CreateObservableGauge("deda_ci_jobs_queued", () => Observe(x => x.Queued));
     private static readonly ObservableGauge<int> Active = Meter.CreateObservableGauge("deda_ci_jobs_active", () => Observe(x => x.Active));
@@ -72,7 +97,8 @@ public static class CiDiagnostics
     public static void Record(string provider, string service, CiQueueSnapshot snapshot) => Snapshots[$"{provider}:{service}"] = (provider, service, snapshot);
     public static void RecordObservation(string provider) => Observations.Add(1, new KeyValuePair<string, object?>("provider", provider));
     public static void RecordApiRequest(string provider) => ApiRequests.Add(1, new KeyValuePair<string, object?>("provider", provider));
-    public static void Failure(string provider) => ApiFailures.Add(1, new KeyValuePair<string, object?>("provider", provider));
+    public static void RecordApiFailure(string provider) => ApiFailures.Add(1, new KeyValuePair<string, object?>("provider", provider));
+    public static void RecordObservationFailure(string provider) => ObservationFailures.Add(1, new KeyValuePair<string, object?>("provider", provider));
     public static void RemoveService(string service) =>
         Snapshots.Where(entry => string.Equals(entry.Value.Service, service, StringComparison.Ordinal)).ToList().ForEach(entry => Snapshots.TryRemove(entry.Key, out _));
 

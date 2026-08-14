@@ -98,6 +98,34 @@ public sealed class RabbitMqCredentialsProviderTests
         }
     }
 
+    [Fact]
+    public void CredentialReference_RejectsCredentialTypedForAnotherProvider()
+    {
+        var policy = new CredentialPolicy(new Dictionary<string, CredentialBinding>
+        {
+            ["build"] = new("github", "token", new HashSet<string>(["rabbitmq.internal"]), new HashSet<string>()),
+        });
+        var provider = new EnvOrFileRabbitMqCredentialsProvider(new RecordingSecretResolver("alice:secret"), policy, false);
+        var config = new ScaleConfig { TriggerConfig = new Dictionary<string, string> { ["credentialsRef"] = "build", ["url"] = "http://rabbitmq.internal:15672" } };
+
+        var error = Assert.Throws<InvalidOperationException>(() => provider.Get(Service(), config));
+
+        Assert.Contains("not a 'rabbitmq' credential", error.Message);
+    }
+
+    [Fact]
+    public void CredentialReference_AllowsLegacyUntypedRabbitMqBinding()
+    {
+        var policy = new CredentialPolicy(new Dictionary<string, CredentialBinding>
+        {
+            ["orders"] = new(string.Empty, "orders-rabbitmq", new HashSet<string>(["rabbitmq.internal"]), new HashSet<string>()),
+        });
+        var provider = new EnvOrFileRabbitMqCredentialsProvider(new RecordingSecretResolver("alice:secret"), policy, false);
+        var config = new ScaleConfig { TriggerConfig = new Dictionary<string, string> { ["credentialsRef"] = "orders", ["url"] = "http://rabbitmq.internal:15672" } };
+
+        Assert.Equal("alice", provider.Get(Service(), config).Username);
+    }
+
     private static ServiceRef Service() =>
         new("service-1", "worker", 1, new Dictionary<string, string>(), 1, SwarmServiceMode.Replicated);
 

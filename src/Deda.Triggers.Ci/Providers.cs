@@ -36,24 +36,26 @@ public sealed class GitHubActionsQueueProvider(IHttpClientFactory clients, Crede
         var queued = 0; var active = 0;
 
         foreach (var repo in repos)
-        foreach (var status in new[] { "queued", "in_progress" })
-        {
-            for (var page = 1; ; page++)
+            foreach (var status in new[] { "queued", "in_progress" })
             {
-                var runsUri = new Uri(api, $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/actions/runs?status={status}&per_page=100&page={page}");
-                using var response = await SendAsync(clients.CreateClient("github-actions"), GitHubRequest(runsUri, token), Type, ct).ConfigureAwait(false);
-                await EnsureSuccess(response, Type, ct).ConfigureAwait(false);
-                using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false));
-                if (!document.RootElement.TryGetProperty("workflow_runs", out var runs) || runs.ValueKind != JsonValueKind.Array)
-                    throw new InvalidOperationException("GitHub response is missing workflow_runs.");
-                foreach (var run in runs.EnumerateArray())
+                for (var page = 1; ; page++)
                 {
-                    if (run.TryGetProperty("id", out var id) && id.TryGetInt64(out var runId))
+                    var runsUri = new Uri(api, $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/actions/runs?status={status}&per_page=100&page={page}");
+                    using var response = await SendAsync(clients.CreateClient("github-actions"), GitHubRequest(runsUri, token), Type, ct).ConfigureAwait(false);
+                    await EnsureSuccess(response, Type, ct).ConfigureAwait(false);
+                    using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false));
+                    if (!document.RootElement.TryGetProperty("workflow_runs", out var runs) || runs.ValueKind != JsonValueKind.Array)
+                        throw new InvalidOperationException("GitHub response is missing workflow_runs.");
+                    foreach (var run in runs.EnumerateArray())
+                    {
+                        EnsureObject(run, "GitHub workflow run");
+                        var runId = RequiredInt64(run, "id", "GitHub workflow run");
+                        if (runId <= 0) throw new InvalidOperationException("GitHub workflow run property 'id' must be a positive integer.");
                         (queued, active) = await CountJobsAsync(api, owner, repo, runId, token, runnerLabels, queued, active, ct).ConfigureAwait(false);
+                    }
+                    if (!HasNextPage(response, runs.GetArrayLength(), "Link")) break;
                 }
-                if (!HasNextPage(response, runs.GetArrayLength(), "Link")) break;
             }
-        }
         return new(queued, active, DateTimeOffset.UtcNow);
     }
 
@@ -69,7 +71,8 @@ public sealed class GitHubActionsQueueProvider(IHttpClientFactory clients, Crede
                 throw new InvalidOperationException("GitHub jobs response is missing jobs.");
             foreach (var job in jobs.EnumerateArray())
             {
-                var jobStatus = String(job, "status");
+                EnsureObject(job, "GitHub job");
+                var jobStatus = RequiredString(job, "status", "GitHub job");
                 if (jobStatus is not ("queued" or "in_progress") || !JobRequirementsMatch(job, "labels", runnerLabels, StringComparer.OrdinalIgnoreCase, false)) continue;
                 if (jobStatus == "queued") queued++; else active++;
             }
@@ -112,9 +115,13 @@ public sealed class GitLabCiQueueProvider(IHttpClientFactory clients, Credential
                 if (document.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidOperationException("GitLab jobs response is not an array.");
                 foreach (var job in document.RootElement.EnumerateArray())
                 {
+                    EnsureObject(job, "GitLab job");
+                    var status = RequiredString(job, "status", "GitLab job");
+                    if (status is not ("pending" or "running"))
+                        throw new InvalidOperationException($"GitLab job property 'status' has unsupported value '{status}'.");
                     if (!JobRequirementsMatch(job, "tag_list", runnerTags, StringComparer.Ordinal, runUntagged)) continue;
-                    if (String(job, "status") == "pending") queued++;
-                    else if (String(job, "status") == "running") active++;
+                    if (status == "pending") queued++;
+                    else active++;
                 }
                 if (!HasNextPage(response, document.RootElement.GetArrayLength(), "X-Next-Page")) break;
             }
@@ -140,9 +147,10 @@ public sealed class AzurePipelinesQueueProvider(IHttpClientFactory clients, Cred
         var queued = 0; var active = 0;
         foreach (var job in jobs.EnumerateArray())
         {
-            if (job.TryGetProperty("finishTime", out var finish) && finish.ValueKind != JsonValueKind.Null) continue;
+            EnsureObject(job, "Azure Pipelines job request");
+            if (NullableTimestamp(job, "finishTime", "Azure Pipelines job request") is not null) continue;
             if (!AzureDemandsMatch(job, capabilities)) continue;
-            if (!job.TryGetProperty("assignTime", out var assigned) || assigned.ValueKind == JsonValueKind.Null) queued++; else active++;
+            if (NullableTimestamp(job, "assignTime", "Azure Pipelines job request") is null) queued++; else active++;
         }
         return new(queued, active, DateTimeOffset.UtcNow);
     }
@@ -174,10 +182,37 @@ file static class CiProviderHelpers
     public static Uri Endpoint(string value) => Uri.TryCreate(value.TrimEnd('/') + "/", UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) ? uri : throw new InvalidOperationException("CI provider URL must be absolute HTTP or HTTPS.");
     public static IReadOnlySet<string> Values(string? value, StringComparer? comparer = null) => string.IsNullOrWhiteSpace(value) ? new HashSet<string>(comparer ?? StringComparer.OrdinalIgnoreCase) : new HashSet<string>(value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), comparer ?? StringComparer.OrdinalIgnoreCase);
     public static string? String(JsonElement value, string property) => value.TryGetProperty(property, out var node) && node.ValueKind == JsonValueKind.String ? node.GetString() : null;
+    public static void EnsureObject(JsonElement value, string context)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException($"{context} must be an object.");
+    }
+    public static string RequiredString(JsonElement value, string property, string context) =>
+        value.TryGetProperty(property, out var node) && node.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(node.GetString())
+            ? node.GetString()!
+            : throw new InvalidOperationException($"{context} property '{property}' must be a non-empty string.");
+    public static long RequiredInt64(JsonElement value, string property, string context) =>
+        value.TryGetProperty(property, out var node) && node.TryGetInt64(out var number)
+            ? number
+            : throw new InvalidOperationException($"{context} property '{property}' must be an integer.");
+    public static DateTimeOffset? NullableTimestamp(JsonElement value, string property, string context)
+    {
+        if (!value.TryGetProperty(property, out var node)) return null;
+        if (node.ValueKind == JsonValueKind.Null) return null;
+        if (node.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(node.GetString(), out var timestamp)) return timestamp;
+        throw new InvalidOperationException($"{context} property '{property}' must be null or an ISO-8601 timestamp.");
+    }
     public static bool JobRequirementsMatch(JsonElement job, string property, IReadOnlySet<string> runnerCapabilities, StringComparer comparer, bool runUntagged)
     {
-        if (!job.TryGetProperty(property, out var requirements) || requirements.ValueKind != JsonValueKind.Array) return runUntagged;
-        var required = new HashSet<string>(requirements.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!), comparer);
+        if (!job.TryGetProperty(property, out var requirements) || requirements.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException($"CI job property '{property}' must be an array.");
+        var required = new HashSet<string>(comparer);
+        foreach (var requirement in requirements.EnumerateArray())
+        {
+            if (requirement.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(requirement.GetString()))
+                throw new InvalidOperationException($"CI job property '{property}' must contain non-empty strings.");
+            required.Add(requirement.GetString()!);
+        }
         return required.Count == 0 ? runUntagged : required.All(runnerCapabilities.Contains);
     }
     public static Dictionary<string, string?> AzureCapabilities(string? raw)
@@ -192,11 +227,13 @@ file static class CiProviderHelpers
     }
     public static bool AzureDemandsMatch(JsonElement job, IReadOnlyDictionary<string, string?> capabilities)
     {
-        if (!job.TryGetProperty("demands", out var demands) || demands.ValueKind != JsonValueKind.Array) return true;
+        if (!job.TryGetProperty("demands", out var demands)) return true;
+        if (demands.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("Azure Pipelines job request property 'demands' must be an array.");
         foreach (var demandElement in demands.EnumerateArray())
         {
             var demand = AzureDemand.Parse(demandElement);
-            if (demand is null || !capabilities.TryGetValue(demand.Name, out var capability)) return false;
+            if (!capabilities.TryGetValue(demand.Name, out var capability)) return false;
             if (demand.Value is not null && !string.Equals(capability, demand.Value, StringComparison.OrdinalIgnoreCase)) return false;
         }
         return true;
@@ -204,7 +241,19 @@ file static class CiProviderHelpers
     public static async Task<HttpResponseMessage> SendAsync(HttpClient client, HttpRequestMessage request, string provider, CancellationToken ct)
     {
         CiDiagnostics.RecordApiRequest(provider);
-        return await client.SendAsync(request, ct).ConfigureAwait(false);
+        try
+        {
+            return await client.SendAsync(request, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            CiDiagnostics.RecordApiFailure(provider);
+            throw;
+        }
     }
     public static bool HasNextPage(HttpResponseMessage response, int itemCount, string header)
     {
@@ -217,20 +266,31 @@ file static class CiProviderHelpers
     public static async Task EnsureSuccess(HttpResponseMessage response, string provider, CancellationToken ct)
     {
         if (response.IsSuccessStatusCode) return;
+        CiDiagnostics.RecordApiFailure(provider);
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         throw new InvalidOperationException($"{provider} API returned {(int)response.StatusCode}: {(body.Length <= 200 ? body : body[..200])}");
     }
 
     private sealed record AzureDemand(string Name, string? Value)
     {
-        public static AzureDemand? Parse(JsonElement element)
+        public static AzureDemand Parse(JsonElement element)
         {
             var text = element.ValueKind == JsonValueKind.String ? element.GetString() : String(element, "name");
-            if (string.IsNullOrWhiteSpace(text)) return null;
+            if (string.IsNullOrWhiteSpace(text))
+                throw new InvalidOperationException("Azure Pipelines demand must be a non-empty string or an object with a non-empty name.");
             const string equals = " -equals ";
             var index = text.IndexOf(equals, StringComparison.OrdinalIgnoreCase);
-            if (index >= 0) return new(text[..index].Trim(), text[(index + equals.Length)..].Trim());
-            if (element.ValueKind == JsonValueKind.Object && String(element, "value") is { Length: > 0 } value) return new(text.Trim(), value);
+            if (index >= 0)
+            {
+                var name = text[..index].Trim();
+                var expectedValue = text[(index + equals.Length)..].Trim();
+                if (name.Length == 0 || expectedValue.Length == 0)
+                    throw new InvalidOperationException("Azure Pipelines equals demand must contain a name and value.");
+                return new(name, expectedValue);
+            }
+            if (text.Contains(" -", StringComparison.Ordinal))
+                throw new InvalidOperationException($"Azure Pipelines demand '{text}' uses an unsupported operator.");
+            if (element.ValueKind == JsonValueKind.Object && String(element, "value") is { Length: > 0 } objectValue) return new(text.Trim(), objectValue);
             return new(text.Trim(), null);
         }
     }

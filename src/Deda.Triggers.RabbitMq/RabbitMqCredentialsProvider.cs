@@ -24,7 +24,7 @@ public sealed class EnvOrFileRabbitMqCredentialsProvider(
         {
             var url = config.TriggerConfig.GetValueOrDefault("url") ?? throw new InvalidOperationException("RabbitMQ trigger.url is required with credentialsRef.");
             if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint)) throw new InvalidOperationException("RabbitMQ trigger.url must be an absolute URL with credentialsRef.");
-            return ParseSecret(secretResolver.Resolve(_policy.Resolve(service, reference.Trim(), endpoint).Secret), reference.Trim());
+            return ParseSecret(secretResolver.Resolve(_policy.Resolve(service, reference.Trim(), endpoint, "rabbitmq", allowLegacyUntyped: true).Secret), reference.Trim());
         }
         if (config.TriggerConfig.TryGetValue("credentialsSecret", out var secretName) && !string.IsNullOrWhiteSpace(secretName))
         {

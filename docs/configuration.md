@@ -40,7 +40,7 @@ does not autoscale that service.
 | RabbitMQ | `trigger.type=rabbitmq`, `trigger.url`, `trigger.queue` | `trigger.vhost`, `trigger.metric`, `trigger.timeoutSeconds`, `trigger.credentialsRef` |
 | Prometheus | `trigger.type=prometheus`, `trigger.url`, `trigger.query` | `trigger.timeoutSeconds` |
 | HTTP | `trigger.type=http`, `trigger.url` | `trigger.timeoutSeconds`, `trigger.valuePath` |
-| GitHub Actions | `trigger.type=github-actions`, `trigger.owner`, `trigger.repos`, `trigger.labels`, `trigger.credentialsRef` | `trigger.scope`, `trigger.apiUrl`, `trigger.refreshSeconds` |
+| GitHub Actions | `trigger.type=github-actions`, `trigger.owner`, `trigger.repos`, `trigger.labels`, `trigger.credentialsRef` | `trigger.apiUrl`, `trigger.refreshSeconds` |
 | Azure Pipelines | `trigger.type=azure-pipelines`, `trigger.organizationUrl`, `trigger.poolId` or `trigger.poolName`, `trigger.credentialsRef` | `trigger.demands`, `trigger.refreshSeconds` |
 | GitLab CI | `trigger.type=gitlab-ci`, `trigger.projects`, `trigger.credentialsRef` | `trigger.url`, `trigger.tags`, `trigger.runUntagged`, `trigger.refreshSeconds` |
 

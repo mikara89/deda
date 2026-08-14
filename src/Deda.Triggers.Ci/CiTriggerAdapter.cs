@@ -29,7 +29,7 @@ public abstract class CiTriggerAdapter(ICiQueueProvider provider, CiObservationC
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            CiDiagnostics.Failure(Type);
+            CiDiagnostics.RecordObservationFailure(Type);
             return TriggerResult.Fail($"{Type}: {ex.GetType().Name}: {ex.Message}");
         }
     }

@@ -76,3 +76,15 @@ The project Jobs API is queried for `pending` and `running` jobs. A job's tags
 must be a subset of the configured runner tags, using GitLab's case-sensitive
 matching; `runUntagged=true` includes untagged jobs.
 Self-managed GitLab is supported by setting `trigger.url`.
+
+## Runner shutdown contract for PR6
+
+DEDA controls only the desired Swarm replica count. Swarm may choose any task
+when scaling down, including one that is currently executing a job. Runner
+images must therefore implement job-aware draining and graceful deregistration,
+and their service examples must configure a stop grace period long enough for
+that shutdown path.
+
+PR6 qualification must exercise downscaling while a job is active and prove
+that the job is not interrupted or abandoned. A runner example is not qualified
+solely because registration, idle scale-up, and idle scale-down succeed.
