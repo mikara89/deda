@@ -9,7 +9,9 @@ done
 for script in run-deterministic.sh collect-evidence.sh real/run-all.sh real/github.sh real/azure-pipelines.sh real/gitlab.sh; do
   test -x "$SCRIPT_DIR/$script" || { echo "missing executable bit on $script" >&2; exit 1; }
 done
+# shellcheck disable=SC2016
 grep -Fq 'bash "$SCRIPT_DIR/collect-evidence.sh"' "$SCRIPT_DIR/run-deterministic.sh"
+# shellcheck disable=SC2016
 grep -Fq 'bash "$SCRIPT_DIR/$provider.sh"' "$SCRIPT_DIR/real/run-all.sh"
 python3 -m py_compile "$SCRIPT_DIR/simulator/server.py"
 python3 "$SCRIPT_DIR/simulator/test_server.py"
