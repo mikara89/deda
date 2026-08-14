@@ -33,7 +33,10 @@ for provider in github azure gitlab; do
       || fail_scenario "could not collect $provider drain run $drain_run log"
     case "$provider" in
       github)
-        grep -Fq 'preserving the active ephemeral job' "$log_file" || fail_scenario "GitHub busy-hook protection did not engage on drain run $drain_run"
+        if ! grep -Fq 'preserving the active ephemeral job' "$log_file"; then
+          cat "$log_file" >&2 || true
+          fail_scenario "GitHub busy-hook protection did not engage on drain run $drain_run"
+        fi
         grep -Fq 'runner exited during drain' "$log_file" || fail_scenario "GitHub runner did not finish during drain run $drain_run"
         ;;
       azure)
