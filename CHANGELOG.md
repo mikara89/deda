@@ -1,16 +1,12 @@
 # Changelog
 
-## v0.2.0 (unreleased)
-
-- Fail closed on malformed explicit autoscaling labels and invalid failsafe values.
-- Add operator-owned RabbitMQ credential bindings, per-attempt HA mutation guards, lifecycle telemetry cleanup, bounded reconciliation, cycle timeouts, and readiness freshness.
-- Add direct Docker socket rendering to `docker deda install --docker-access direct`.
-
 All notable changes to DEDA are documented here. Releases follow
 [Semantic Versioning](https://semver.org/) and this file follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+## v0.2.0 - 2026-08-14
 
 ### Changed
 
@@ -29,6 +25,11 @@ All notable changes to DEDA are documented here. Releases follow
 - Optional active/standby operation using a fail-closed Redis TTL leader lease.
 - Generic HTTP scalar metrics, scale-to-zero grace, and efficient bounded
   recommendation history.
+- Operator-owned RabbitMQ credential bindings, per-attempt HA mutation guards,
+  lifecycle telemetry cleanup, bounded reconciliation, cycle timeouts, and
+  readiness freshness.
+- Direct Docker socket rendering through
+  `docker deda install --docker-access direct`.
 
 ### Security
 
@@ -39,6 +40,7 @@ All notable changes to DEDA are documented here. Releases follow
 
 ### Fixed
 
+- Fail closed on malformed explicit autoscaling labels and invalid failsafe values.
 - Trigger failures reset scale-to-zero inactivity evidence before the next
   valid zero observation starts a new grace window.
 - Redis leader-store outages now make reconciliation readiness unhealthy rather
