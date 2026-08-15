@@ -7,13 +7,15 @@ set_state '{"github":{"runs":[{"id":1,"status":"queued"}],"jobs":[{"status":"que
 wait_replicas github-runner 1
 old_service=$(service github-runner)
 wait_until 'CI telemetry for managed GitHub runner' 45 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS 'http://$(service deda):8080/metrics' | grep -F 'service=\"$old_service\"' >/dev/null" || fail_scenario 'GitHub CI telemetry was not emitted'
-before=$(request_count)
 docker service rm "$old_service" >/dev/null
 wait_until 'GitHub runner service deletion' 60 bash -c "! docker service inspect '$old_service' >/dev/null 2>&1" || fail_scenario 'GitHub runner service was not deleted'
 wait_until 'stale GitHub CI telemetry removal' 60 bash -c "! docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS 'http://$(service deda):8080/metrics' | grep -F 'service=\"$old_service\"' >/dev/null" || fail_scenario 'stale GitHub CI telemetry remained after service deletion'
 docker stack deploy -c "$SCRIPT_DIR/stack/stack.yml" "$DEDA_QUAL_STACK" >/dev/null
 wait_until 'recreated GitHub runner service' 60 bash -c "docker service inspect '$old_service' >/dev/null 2>&1" || fail_scenario 'GitHub runner service was not recreated'
+wait_until 'provider simulator health after stack redeploy' 90 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/healthz' >/dev/null" || fail_scenario 'simulator did not become healthy after stack redeploy'
 wait_until 'DEDA readiness after stack redeploy' 90 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS 'http://$(service deda):8080/health/ready' >/dev/null" || fail_scenario 'DEDA did not become ready after stack redeploy'
+set_state '{"github":{"runs":[{"id":1,"status":"queued"}],"jobs":[{"status":"queued","labels":["self-hosted","linux","deda"]}]}}'
+before=$(request_count)
 wait_for_endpoint_observation_after "$before" '/actions/' 'fresh GitHub provider observation after service recreation'
 wait_replicas github-runner 1
 set_state '{"github":{"runs":[],"jobs":[]}}'; wait_replicas github-runner 0
