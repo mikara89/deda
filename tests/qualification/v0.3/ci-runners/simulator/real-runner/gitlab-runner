@@ -18,14 +18,21 @@ case "$1" in
     sleep "$duration" & child=$!
     drain() {
       printf 'job=%s provider=gitlab event=drain-signal signal=%s at=%s\n' "$job" "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-      wait "$child"
+      if [ -n "${child:-}" ]; then
+        wait "$child" || true
+      fi
       printf 'job=%s provider=gitlab event=completed-after-drain at=%s\n' "$job" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       exit 0
     }
     trap 'drain QUIT' QUIT
     trap 'drain TERM' TERM
     trap 'drain INT' INT
-    wait "$child"
+    wait "$child" || true
+    child=
     printf 'job=%s provider=gitlab event=completed at=%s\n' "$job" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    while true; do
+      sleep 3600 & idle=$!
+      wait "$idle" || true
+    done
     ;;
 esac
