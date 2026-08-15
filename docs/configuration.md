@@ -45,7 +45,9 @@ does not autoscale that service.
 | GitLab CI | `trigger.type=gitlab-ci`, `trigger.projects`, `trigger.credentialsRef` | `trigger.url`, `trigger.tags`, `trigger.runUntagged`, `trigger.refreshSeconds` |
 
 See the [RabbitMQ](triggers/rabbitmq.md), [Prometheus](triggers/prometheus.md),
-and [HTTP](triggers/http.md) references for exact response semantics.
+[HTTP](triggers/http.md), and [CI runner](triggers/ci-runners.md) references
+for exact response semantics. GitHub Actions, Azure Pipelines, and GitLab CI
+use `required capacity = queued jobs + active jobs`.
 
 ## Fail-safe modes
 

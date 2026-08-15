@@ -2,9 +2,46 @@
 
 v0.3 focuses on autoscaling self-hosted Docker Swarm runners for GitHub
 Actions, Azure Pipelines, and GitLab CI. DEDA computes runner capacity from
-compatible queued **plus active** jobs. Provider observations are cached per
+compatible queued **plus active** jobs:
+
+```text
+required capacity = queued jobs + active jobs
+```
+
+Queue-only scaling is unsafe for ephemeral runners. After every runner claims
+work the queue is empty, so a queue-only controller would scale the service
+down while jobs are still running. Provider observations are cached per
 controller/service for `refreshSeconds`; an API or semantic response failure
 uses the service fail-safe policy rather than interpreting failure as zero work.
+
+## Ownership
+
+| Owner | Responsibility |
+| --- | --- |
+| DEDA | Observe compatible provider queues, compute required capacity, and change the Swarm service desired replica count. |
+| Runner container | Register with the provider, execute the job, deregister, drain gracefully, and clean up local state. |
+
+DEDA does not register runners, cancel jobs, or choose which Swarm task is
+stopped on scale-down.
+
+## Qualification hierarchy
+
+These statuses are not interchangeable:
+
+| Status field | How it is produced | What PASS means |
+| --- | --- | --- |
+| `fastQualification` | `run-deterministic.sh --fast` (simulator + Swarm) | Fast deterministic scenarios passed. |
+| `fullDeterministicQualification` | `run-deterministic.sh --full` (real runner entrypoints + fake provider) | Full deterministic scenarios passed. |
+| Real-provider GitHub Actions / Azure Pipelines / GitLab CI | Operator-run `real/*.sh --confirm-real-provider-tests` | That SaaS provider completed `0 → N → 0` with correlated jobs. |
+| `releaseQualification` | Aggregate of full deterministic PASS **and** all three real-provider PASS, bound to the same commit and digest-pinned images | The candidate may be promoted to v0.3.0 final. |
+
+```text
+fastQualification PASS  ≠  releaseQualification PASS
+fullDeterministicQualification PASS  ≠  releaseQualification PASS
+```
+
+`NOT_RUN` is never converted into `PASS`. Deterministic evidence never implies
+real-provider success.
 
 ## Two qualification levels
 
@@ -69,15 +106,80 @@ GitLab CI real-provider runs all have PASS evidence. Any mandatory provider
 failure makes release qualification `FAIL`; `NOT_RUN` is never converted into
 `PASS`.
 
+## Promotion path
+
+```text
+v0.3.0-rc.1
+    → fullDeterministicQualification PASS
+    → real GitHub Actions PASS
+    → real Azure Pipelines PASS
+    → real GitLab CI PASS
+    → same commit + same sha256 image digests
+    → releaseQualification PASS
+    → tag v0.3.0 final
+```
+
+Do not promote from `fastQualification` alone. Do not retag a mutable
+`v0.3` / `latest` image; publish and qualify only `image@sha256:…` references.
+
 ## Operator prerequisites
 
 - A Swarm manager with Docker CLI access for deterministic mode.
-- An immutable candidate `DEDA_IMAGE`; never qualify `latest`.
+- An immutable candidate `DEDA_IMAGE` (`image@sha256:…`); never qualify
+  `latest`, `v0.3`, or any other mutable tag.
 - For real mode: dedicated existing GitHub repository/workflow, Azure
   organization/project/pipeline/agent pool, and GitLab project/ref/runner
   target, with differing-duration jobs already defined by the target workflow.
 - Queue and registration tokens supplied only as readable files; do not place
   them in labels, result files, or command output.
+
+## Deterministic commands
+
+Build a local candidate only for development. Qualification of an RC must use
+the published digest from the GitHub Release / GHCR workflow:
+
+```bash
+export DEDA_IMAGE=ghcr.io/mikara89/deda@sha256:<rc-manifest-digest>
+bash tests/qualification/v0.3/ci-runners/run-deterministic.sh --fast
+bash tests/qualification/v0.3/ci-runners/run-deterministic.sh --full
+```
+
+Or dispatch `.github/workflows/ci-runner-qualification.yml` with `mode=fast` or
+`mode=full` and `confirm_real_provider_tests=false`. That workflow never runs
+real SaaS tests.
+
+## Real-provider readiness (do not run accidentally)
+
+Real GitHub Actions, Azure Pipelines, and GitLab CI qualification is
+operator-only. Credentials alone are not authorization. Every command requires
+`--confirm-real-provider-tests`. This repository's v0.3.0-rc.1 preparation
+**must not** execute these commands.
+
+Required digest-pinned images:
+
+```bash
+export REAL_DEDA_IMAGE=ghcr.io/mikara89/deda@sha256:<rc-manifest-digest>
+export GITHUB_QUAL_RUNNER_IMAGE=<registry>/deda-github-runner@sha256:<digest>
+export AZURE_QUAL_RUNNER_IMAGE=<registry>/deda-azure-runner@sha256:<digest>
+export GITLAB_QUAL_RUNNER_IMAGE=<registry>/deda-gitlab-runner@sha256:<digest>
+export RUN_ID=<same-id-as-full-deterministic-run>
+```
+
+Required secret files (never labels or environment token values):
+
+| Provider | Queue observer file | Runner registration file | Other required env |
+| --- | --- | --- | --- |
+| GitHub Actions | `GITHUB_QUAL_QUEUE_TOKEN_FILE` | `GITHUB_QUAL_RUNNER_ADMIN_TOKEN_FILE` | `GITHUB_QUAL_OWNER`, `GITHUB_QUAL_REPOSITORY`, `GITHUB_QUAL_WORKFLOW` |
+| Azure Pipelines | `AZURE_QUAL_QUEUE_TOKEN_FILE` | `AZURE_QUAL_AGENT_TOKEN_FILE` | `AZURE_QUAL_ORGANIZATION_URL`, `AZURE_QUAL_PROJECT`, `AZURE_QUAL_PIPELINE_ID`, `AZURE_QUAL_POOL` |
+| GitLab CI | `GITLAB_QUAL_QUEUE_TOKEN_FILE` | `GITLAB_QUAL_RUNNER_TOKEN_FILE` | `GITLAB_QUAL_URL`, `GITLAB_QUAL_PROJECT`, `GITLAB_QUAL_REF`, `GITLAB_QUAL_TAGS` |
+
+```bash
+# Operator-only. Do not run during RC preparation.
+bash tests/qualification/v0.3/ci-runners/real/run-all.sh --confirm-real-provider-tests
+```
+
+Individual providers: `real/github.sh`, `real/azure-pipelines.sh`,
+`real/gitlab.sh`, each with the same confirmation flag.
 
 The v0.2 Hetzner harness remains the approved reusable foundation for an
 explicit, dry-run-capable multi-manager cloud qualification. It does not run

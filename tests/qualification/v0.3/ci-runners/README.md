@@ -10,10 +10,12 @@ Pipelines, and GitLab CI. It has two intentionally separate levels:
    pre-existing SaaS targets. It is opt-in and never runs merely because secret
    environment variables exist.
 
-Deterministic PASS is implementation evidence, not a release qualification.
-`RESULT.md` therefore reports `RELEASE QUALIFICATION: NOT_QUALIFIED` until all
-three real-provider qualifications and every mandatory deterministic scenario
-have supplied PASS evidence.
+`fastQualification` PASS and `fullDeterministicQualification` PASS are
+implementation evidence, not a release qualification. They are not equivalent
+to `releaseQualification` PASS, which also requires real GitHub Actions, Azure
+Pipelines, and GitLab CI evidence bound to the same commit and `sha256` image
+digests. `RESULT.md` therefore reports `RELEASE QUALIFICATION: NOT_QUALIFIED`
+until that aggregate is complete. `NOT_RUN` is never converted into `PASS`.
 
 The simulator records endpoint, timestamp, response mode, and bounded request
 counts. It never records authorization headers. Qualification secrets are

@@ -1,12 +1,24 @@
 # CI runner triggers
 
-CI runner triggers scale from **queued plus active** compatible jobs. This keeps
-running jobs represented after the queue drains, preventing DEDA from scaling a
-runner service down solely because every runner has picked up work.
+CI runner triggers scale from **queued plus active** compatible jobs:
+
+```text
+required capacity = queued jobs + active jobs
+```
+
+This keeps running jobs represented after the queue drains. Queue-only scaling
+is unsafe for ephemeral runners: once every runner has claimed work the queue
+is empty, so a queue-only controller would scale the service down while jobs
+are still executing.
 
 Use `targetPerReplica: "1"` when each runner executes one job concurrently.
-The runner image remains responsible for runner registration, deregistration,
-job lifecycle, and cleanup; DEDA only owns the Swarm service replica count.
+
+Ownership is split:
+
+- DEDA observes the provider queue, computes required capacity, and changes
+  only the Swarm service desired replica count.
+- The runner container registers with the provider, executes the job,
+  deregisters, drains, and cleans up local state.
 
 Production-oriented Swarm references, including separate observer and runner
 credentials plus bounded drain behavior, are in the
