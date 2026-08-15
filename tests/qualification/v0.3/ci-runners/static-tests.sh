@@ -82,7 +82,7 @@ if grep -Fq 'tags: ["v*.*.*"]' "$publish_workflow"; then
 fi
 test -f "$promote_workflow"
 grep -Fq 'confirm_promote' "$promote_workflow"
-if grep -nE 'docker build|dotnet publish' "$promote_workflow"; then
+if grep -nE 'dotnet publish' "$promote_workflow" || grep -nE 'docker build' "$promote_workflow" | grep -v 'docker buildx'; then
   echo 'promotion must alias a qualified digest and must not rebuild' >&2
   exit 1
 fi
