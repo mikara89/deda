@@ -3,9 +3,12 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 for command in bash python3 jq; do command -v "$command" >/dev/null 2>&1 || { echo "missing $command" >&2; exit 1; }; done
 find "$SCRIPT_DIR" -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
-for script in github-curl github-jq gitlab-runner; do
+for script in github-curl github-jq; do
   sh -n "$SCRIPT_DIR/simulator/real-runner/$script"
 done
+test -f "$SCRIPT_DIR/simulator/real-runner/gitlab-runner.c"
+grep -Fq 'sigaction(SIGQUIT' "$SCRIPT_DIR/simulator/real-runner/gitlab-runner.c"
+grep -Fq 'completed-after-drain' "$SCRIPT_DIR/simulator/real-runner/gitlab-runner.c"
 for script in run-deterministic.sh collect-evidence.sh real/run-all.sh real/github.sh real/azure-pipelines.sh real/gitlab.sh; do
   test -x "$SCRIPT_DIR/$script" || { echo "missing executable bit on $script" >&2; exit 1; }
 done
