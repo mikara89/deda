@@ -12,9 +12,9 @@ plan_aliases() {
     [[ "$existing" == "$want" ]] && return 0
     return 1
   }
-  local v_state plain_state
-  check_one "$v_existing"; v_state=$?
-  check_one "$plain_existing"; plain_state=$?
+  local v_state=0 plain_state=0
+  check_one "$v_existing" || v_state=$?
+  check_one "$plain_existing" || plain_state=$?
   if (( v_state == 1 || plain_state == 1 )); then
     printf 'FAIL\n'
     return 1
