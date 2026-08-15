@@ -73,6 +73,24 @@ if [[ -f "$SCRIPT_DIR/../../../../.github/workflows/full-deterministic-temp.yml"
   echo 'temporary full-deterministic workflow must not remain in the branch' >&2
   exit 1
 fi
+publish_workflow="$SCRIPT_DIR/../../../../.github/workflows/docker-publish.yml"
+promote_workflow="$SCRIPT_DIR/../../../../.github/workflows/promote-release.yml"
+grep -Fq 'tags: ["v*.*.*-*"]' "$publish_workflow" || { echo 'docker-publish must rebuild only prerelease tags' >&2; exit 1; }
+if grep -Fq 'tags: ["v*.*.*"]' "$publish_workflow"; then
+  echo 'docker-publish must not rebuild stable vMAJOR.MINOR.PATCH tags' >&2
+  exit 1
+fi
+test -f "$promote_workflow"
+grep -Fq 'confirm_promote' "$promote_workflow"
+if grep -nE 'docker build|dotnet publish' "$promote_workflow"; then
+  echo 'promotion must alias a qualified digest and must not rebuild' >&2
+  exit 1
+fi
+grep -Fq 'assert_candidate_source_binding()' "$SCRIPT_DIR/common.sh"
+grep -Fq 'assert_candidate_source_binding' "$SCRIPT_DIR/run-deterministic.sh"
+grep -Fq 'assert_candidate_source_binding' "$SCRIPT_DIR/real/common.sh"
+grep -Fq 'org.opencontainers.image.revision' "$SCRIPT_DIR/common.sh"
+grep -Fq 'candidateImageRevision' "$SCRIPT_DIR/collect-evidence.sh"
 if grep -Fq -- "grep -F 'deda-ado-'" "$SCRIPT_DIR/real/azure-pipelines.sh"; then
   echo 'Azure qualification must not pre-filter worker identities before validation' >&2
   exit 1

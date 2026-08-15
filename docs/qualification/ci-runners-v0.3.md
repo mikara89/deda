@@ -109,36 +109,33 @@ failure makes release qualification `FAIL`; `NOT_RUN` is never converted into
 ## Promotion path
 
 ```text
-v0.3.0-rc.1 image@sha256:AAAA  (and three runner image@sha256 pins)
+prerelease tag v0.3.0-rc.N  (rebuilds, scans, signs)
+    → check out that exact tag
     → fullDeterministicQualification PASS  (same four digest pins)
     → real GitHub Actions PASS
     → real Azure Pipelines PASS
     → real GitLab CI PASS
-    → same commit + same four sha256 digests
+    → same image OCI revision + same four sha256 digests
     → releaseQualification PASS
+    → Promote qualified release workflow
     → alias sha256:AAAA to :v0.3.0 / :0.3.0   (no rebuild)
+    → final git tag + GitHub Release from RC artifacts
 ```
 
-Do not promote from `fastQualification` alone. Do not `git tag v0.3.0` to
-finish the release: `.github/workflows/docker-publish.yml` rebuilds a new
-unverified manifest on every version tag, so the final digest would not be
-the digest that was qualified. If a rebuild is ever required, that new digest
-must go through this path again.
+Do not promote from `fastQualification` alone. Do not `git tag v0.3.0` by
+hand. `.github/workflows/docker-publish.yml` rebuilds only prerelease tags
+(`v*.*.*-*`). Stable `vMAJOR.MINOR.PATCH` tags cannot enter that rebuild
+path. If a rebuild is ever required, that new digest must go through this
+path again.
 
-Promote the already-signed RC digest with the same `imagetools` pattern the
-publish job uses:
-
-```bash
-# After releaseQualification PASS on ghcr.io/mikara89/deda@sha256:AAAA
-docker buildx imagetools create \
-  -t ghcr.io/mikara89/deda:v0.3.0 \
-  -t ghcr.io/mikara89/deda:0.3.0 \
-  ghcr.io/mikara89/deda@sha256:AAAA
-```
-
-Reuse the RC GitHub Release CLI archives, checksums, and SBOM for the final
-`v0.3.0` GitHub Release. Do not retag `latest` or a floating `v0.3` as the
-qualified identity.
+After `releaseQualification` PASS, dispatch
+`.github/workflows/promote-release.yml` with `confirm_promote=true`, the
+qualified RC tag, the qualified `sha256` digest, and `final_tag=v0.3.0`.
+The workflow verifies the source tag digest and
+`org.opencontainers.image.revision`, aliases those tags to the same digest,
+creates the final git tag on the RC commit, and copies the RC CLI archives,
+checksums, and SBOM into the final GitHub Release. It does not run
+`docker build` or `dotnet publish`.
 
 ## Operator prerequisites
 
@@ -163,42 +160,53 @@ Use the checksums from the example Dockerfiles / CI job:
 docker buildx build --platform linux/amd64,linux/arm64 \
   --build-arg RUNNER_SHA256_AMD64=048024cd2c848eb6f14d5646d56c13a4def2ae7ee3ad12122bee960c56f3d271 \
   --build-arg RUNNER_SHA256_ARM64=f44255bd3e80160eb25f71bc83d06ea025f6908748807a584687b3184759f7e4 \
-  -t REGISTRY/deda-github-runner:v0.3.0-rc.1 \
+  -t REGISTRY/deda-github-runner:v0.3.0-rc.2 \
   --push examples/ci-runners/github-actions
 
 # Azure Pipelines
 docker buildx build --platform linux/amd64,linux/arm64 \
   --build-arg AGENT_SHA256_AMD64=828220fc662131f8d6bd427c8d8b9bffae064a9b1532b7e448d58766276b31fa \
   --build-arg AGENT_SHA256_ARM64=bd61a2526333403a6d76243a49846887a1dd8eb115bbce6b037c950c2118f138 \
-  -t REGISTRY/deda-azure-runner:v0.3.0-rc.1 \
+  -t REGISTRY/deda-azure-runner:v0.3.0-rc.2 \
   --push examples/ci-runners/azure-pipelines
 
 # GitLab CI
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t REGISTRY/deda-gitlab-runner:v0.3.0-rc.1 \
+  -t REGISTRY/deda-gitlab-runner:v0.3.0-rc.2 \
   --push examples/ci-runners/gitlab
 ```
 
-Capture each immutable digest (do not keep using the mutable `:v0.3.0-rc.1` tag):
+Capture each immutable digest (do not keep using the mutable `:v0.3.0-rc.2` tag):
 
 ```bash
 digest_of() {
   docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r .digest
 }
-export GITHUB_QUAL_RUNNER_IMAGE="REGISTRY/deda-github-runner@$(digest_of REGISTRY/deda-github-runner:v0.3.0-rc.1)"
-export AZURE_QUAL_RUNNER_IMAGE="REGISTRY/deda-azure-runner@$(digest_of REGISTRY/deda-azure-runner:v0.3.0-rc.1)"
-export GITLAB_QUAL_RUNNER_IMAGE="REGISTRY/deda-gitlab-runner@$(digest_of REGISTRY/deda-gitlab-runner:v0.3.0-rc.1)"
+export GITHUB_QUAL_RUNNER_IMAGE="REGISTRY/deda-github-runner@$(digest_of REGISTRY/deda-github-runner:v0.3.0-rc.2)"
+export AZURE_QUAL_RUNNER_IMAGE="REGISTRY/deda-azure-runner@$(digest_of REGISTRY/deda-azure-runner:v0.3.0-rc.2)"
+export GITLAB_QUAL_RUNNER_IMAGE="REGISTRY/deda-gitlab-runner@$(digest_of REGISTRY/deda-gitlab-runner:v0.3.0-rc.2)"
 ```
 
 ## Deterministic commands
 
-Build a local candidate only for development. A release-bound full run must
-export **all four** digest pins **before** `--full`. Omitting the runner pins
-builds local `:ci` tags, records null runner reference digests, and makes
-later real-provider `candidateMatched` fail even if every SaaS run PASSes.
+Build a local candidate only for development. A release-bound run must use
+the RC tag checkout whose commit equals the image
+`org.opencontainers.image.revision`. Qualifying a digest from a later `main`
+checkout fails closed.
 
 ```bash
-export RUN_ID=v0.3.0-rc.1
+git fetch --tags
+git checkout --detach v0.3.0-rc.2
+test "$(git rev-parse HEAD)" = "$(git rev-parse 'v0.3.0-rc.2^{commit}')"
+```
+
+A release-bound full run must export **all four** digest pins **before**
+`--full`. Omitting the runner pins builds local `:ci` tags, records null
+runner reference digests, and makes later real-provider `candidateMatched`
+fail even if every SaaS run PASSes.
+
+```bash
+export RUN_ID=v0.3.0-rc.2
 export DEDA_IMAGE=ghcr.io/mikara89/deda@sha256:<rc-manifest-digest>
 export GITHUB_QUAL_RUNNER_IMAGE=REGISTRY/deda-github-runner@sha256:<digest>
 export AZURE_QUAL_RUNNER_IMAGE=REGISTRY/deda-azure-runner@sha256:<digest>

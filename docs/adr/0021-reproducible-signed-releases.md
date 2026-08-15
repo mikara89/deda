@@ -43,9 +43,9 @@ mock-only unit run.
   vulnerability reports, and image signatures.
 - A failed scan or signature step cannot leave a rejected digest advertised by
   a public release tag.
-- A later version tag rebuilds a new unverified digest. Promoting a qualified
-  RC must alias the already-signed `sha256` manifest rather than retagging
-  `v0.3.0` through the rebuild path.
+- Prerelease tags (`v*.*.*-*`) rebuild, scan, sign, and publish a new digest.
+  Stable `vMAJOR.MINOR.PATCH` tags do not enter that path. Promotion aliases
+  the already-signed qualified digest through `promote-release.yml`.
 - Maintainers must review digest update pull requests and periodically confirm
   that pinned actions and base images remain supported.
 - Release publication requires GitHub Actions OIDC and artifact-attestation

@@ -8,6 +8,7 @@ mode=${1:---full}
 [[ "$mode" == --fast || "$mode" == --full ]] || die 'usage: run-deterministic.sh [--fast|--full]'
 export DEDA_QUAL_MODE=${mode#--}
 init_run
+assert_candidate_source_binding
 on_exit() {
   local status=$?
   capture_diagnostics_to "$(result_root)"

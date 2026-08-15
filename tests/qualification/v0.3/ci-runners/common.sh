@@ -28,11 +28,29 @@ export GITHUB_RUNNER_CANDIDATE_IMAGE AZURE_RUNNER_CANDIDATE_IMAGE GITLAB_RUNNER_
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 image_digest() { docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true; }
 image_label() { docker image inspect "$1" --format "{{index .Config.Labels \"$2\"}}" 2>/dev/null || true; }
+image_oci_revision() {
+  local image=$1 revision
+  revision=$(image_label "$image" org.opencontainers.image.revision)
+  if [[ -z "$revision" ]]; then
+    docker pull "$image" >/dev/null 2>&1 || true
+    revision=$(image_label "$image" org.opencontainers.image.revision)
+  fi
+  printf '%s\n' "$revision"
+}
 reference_digest() {
   case "$1" in
     *@sha256:*) printf '%s\n' "${1##*@}" ;;
     *) printf '\n' ;;
   esac
+}
+assert_candidate_source_binding() {
+  local digest checkout revision
+  digest=$(reference_digest "${DEDA_IMAGE:-}")
+  [[ -n "$digest" ]] || return 0
+  checkout=$(git -C "$REPO_ROOT" rev-parse HEAD)
+  revision=$(image_oci_revision "$DEDA_IMAGE")
+  [[ -n "$revision" ]] || die "digest-pinned DEDA_IMAGE has no org.opencontainers.image.revision; cannot bind source commit"
+  [[ "$revision" == "$checkout" ]] || die "DEDA_IMAGE revision $revision does not match checkout $checkout; check out the RC tag that built this digest"
 }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 note() { printf '[v0.3 qualification] %s\n' "$*"; }

@@ -25,16 +25,18 @@ export_real_candidate_images() {
   export GITHUB_RUNNER_IMAGE="$GITHUB_QUAL_RUNNER_IMAGE"
   export AZURE_RUNNER_IMAGE="$AZURE_QUAL_RUNNER_IMAGE"
   export GITLAB_RUNNER_IMAGE="$GITLAB_QUAL_RUNNER_IMAGE"
+  assert_candidate_source_binding
 }
 write_real_candidate() {
   local provider=$1 file
   file="$(real_result_dir "$provider")/candidate.json"
   jq -n --arg provider "$provider" --arg collectedAt "$(utc_now)" --arg candidateCommit "$(git rev-parse HEAD)" \
+    --arg candidateImageRevision "$(image_oci_revision "$DEDA_IMAGE")" \
     --arg dedaImage "$DEDA_IMAGE" --arg dedaReferenceDigest "$(reference_digest "$DEDA_IMAGE")" --arg dedaDigest "$(image_digest "$DEDA_IMAGE")" \
     --arg githubRunnerImage "$GITHUB_RUNNER_IMAGE" --arg githubRunnerReferenceDigest "$(reference_digest "$GITHUB_RUNNER_IMAGE")" --arg githubRunnerLocalImageId "$(image_digest "$GITHUB_RUNNER_IMAGE")" \
     --arg azureRunnerImage "$AZURE_RUNNER_IMAGE" --arg azureRunnerReferenceDigest "$(reference_digest "$AZURE_RUNNER_IMAGE")" --arg azureRunnerLocalImageId "$(image_digest "$AZURE_RUNNER_IMAGE")" \
     --arg gitlabRunnerImage "$GITLAB_RUNNER_IMAGE" --arg gitlabRunnerReferenceDigest "$(reference_digest "$GITLAB_RUNNER_IMAGE")" --arg gitlabRunnerLocalImageId "$(image_digest "$GITLAB_RUNNER_IMAGE")" \
-    '{provider:$provider,collectedAt:$collectedAt,candidateCommit:$candidateCommit,dedaImage:$dedaImage,dedaReferenceDigest:$dedaReferenceDigest,dedaDigest:$dedaDigest,githubRunnerImage:$githubRunnerImage,githubRunnerReferenceDigest:$githubRunnerReferenceDigest,githubRunnerLocalImageId:$githubRunnerLocalImageId,azureRunnerImage:$azureRunnerImage,azureRunnerReferenceDigest:$azureRunnerReferenceDigest,azureRunnerLocalImageId:$azureRunnerLocalImageId,gitlabRunnerImage:$gitlabRunnerImage,gitlabRunnerReferenceDigest:$gitlabRunnerReferenceDigest,gitlabRunnerLocalImageId:$gitlabRunnerLocalImageId,containsSecrets:false}' > "$file"
+    '{provider:$provider,collectedAt:$collectedAt,candidateCommit:$candidateCommit,candidateImageRevision:(if $candidateImageRevision == "" then null else $candidateImageRevision end),dedaImage:$dedaImage,dedaReferenceDigest:$dedaReferenceDigest,dedaDigest:$dedaDigest,githubRunnerImage:$githubRunnerImage,githubRunnerReferenceDigest:$githubRunnerReferenceDigest,githubRunnerLocalImageId:$githubRunnerLocalImageId,azureRunnerImage:$azureRunnerImage,azureRunnerReferenceDigest:$azureRunnerReferenceDigest,azureRunnerLocalImageId:$azureRunnerLocalImageId,gitlabRunnerImage:$gitlabRunnerImage,gitlabRunnerReferenceDigest:$gitlabRunnerReferenceDigest,gitlabRunnerLocalImageId:$gitlabRunnerLocalImageId,containsSecrets:false}' > "$file"
 }
 real_result_dir() { printf '%s/real-%s' "$(result_root)" "$1"; }
 begin_real() { mkdir -p "$(real_result_dir "$1")"; }

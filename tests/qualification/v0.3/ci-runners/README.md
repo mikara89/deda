@@ -21,6 +21,10 @@ The simulator records endpoint, timestamp, response mode, and bounded request
 counts. It never records authorization headers. Qualification secrets are
 short-lived Docker secrets and are excluded from result files.
 
+A digest-pinned `DEDA_IMAGE` must be used from the checkout whose `HEAD`
+equals the image `org.opencontainers.image.revision`. The harness fails if
+those commits differ.
+
 Full deterministic mode uses qualification images derived from the real PR10
 runner images. The fake provider binaries keep the API interaction
 deterministic while Swarm still signals the actual GitHub, Azure, and GitLab

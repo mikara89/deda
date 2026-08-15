@@ -1,0 +1,155 @@
+name: Promote qualified release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Qualified prerelease tag (e.g. v0.3.0-rc.2)
+        required: true
+        type: string
+      image_digest:
+        description: Qualified immutable digest (sha256:...)
+        required: true
+        type: string
+      final_tag:
+        description: Final version tag (e.g. v0.3.0)
+        required: true
+        type: string
+      confirm_promote:
+        description: Must be true; aliases the digest and does not rebuild
+        required: true
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Alias qualified digest and publish final release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Require explicit promotion confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm_promote }}
+        run: |
+          [[ "$CONFIRM" == "true" ]] || {
+            echo "Promotion requires confirm_promote=true; refusing."
+            exit 1
+          }
+
+      - name: Validate tag and digest inputs
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          FINAL_TAG: ${{ inputs.final_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          [[ "$SOURCE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-.+$ ]] || {
+            echo "source_tag must be a prerelease (vMAJOR.MINOR.PATCH-*), got: $SOURCE_TAG"
+            exit 1
+          }
+          [[ "$FINAL_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "final_tag must be a stable version (vMAJOR.MINOR.PATCH), got: $FINAL_TAG"
+            exit 1
+          }
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "image_digest must be sha256: plus 64 hex chars, got: $IMAGE_DIGEST"
+            exit 1
+          }
+
+      - name: Checkout the qualified source tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ inputs.source_tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify source image identity
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          FINAL_TAG: ${{ inputs.final_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          source_digest=$(docker buildx imagetools inspect "${image}:${SOURCE_TAG}" --format '{{json .Manifest}}' | jq -r .digest)
+          [[ "$source_digest" == "$IMAGE_DIGEST" ]] || {
+            echo "source tag ${SOURCE_TAG} digest ${source_digest} != provided ${IMAGE_DIGEST}"
+            exit 1
+          }
+          docker pull "${image}@${IMAGE_DIGEST}"
+          revision=$(docker image inspect "${image}@${IMAGE_DIGEST}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+          checkout=$(git rev-parse HEAD)
+          [[ -n "$revision" ]] || {
+            echo "qualified image has no org.opencontainers.image.revision"
+            exit 1
+          }
+          [[ "$revision" == "$checkout" ]] || {
+            echo "image revision ${revision} != source tag commit ${checkout}"
+            exit 1
+          }
+          if git rev-parse "$FINAL_TAG" >/dev/null 2>&1; then
+            echo "final tag ${FINAL_TAG} already exists"
+            exit 1
+          fi
+          if gh release view "$FINAL_TAG" >/dev/null 2>&1; then
+            echo "final GitHub Release ${FINAL_TAG} already exists"
+            exit 1
+          fi
+
+      - name: Alias qualified digest to final tags
+        env:
+          FINAL_TAG: ${{ inputs.final_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          version="${FINAL_TAG#v}"
+          docker buildx imagetools create \
+            -t "${image}:${FINAL_TAG}" \
+            -t "${image}:${version}" \
+            "${image}@${IMAGE_DIGEST}"
+          published=$(docker buildx imagetools inspect "${image}:${FINAL_TAG}" --format '{{json .Manifest}}' | jq -r .digest)
+          [[ "$published" == "$IMAGE_DIGEST" ]] || {
+            echo "promoted ${FINAL_TAG} digest ${published} != qualified ${IMAGE_DIGEST}"
+            exit 1
+          }
+
+      - name: Create final git tag on the qualified commit
+        env:
+          FINAL_TAG: ${{ inputs.final_tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$FINAL_TAG" HEAD -m "$FINAL_TAG"
+          git push origin "refs/tags/${FINAL_TAG}"
+
+      - name: Create GitHub Release from RC artifacts
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          FINAL_TAG: ${{ inputs.final_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts
+          gh release download "$SOURCE_TAG" --dir artifacts
+          gh release create "$FINAL_TAG" artifacts/* \
+            --verify-tag \
+            --title "$FINAL_TAG" \
+            --notes "Promoted from ${SOURCE_TAG} without rebuilding. Image identity is the qualified digest ${{ inputs.image_digest }}."
