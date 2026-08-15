@@ -130,6 +130,24 @@ if bash "$SCRIPT_DIR/promote-preflight.sh" \
   echo 'promotion preflight must reject a final_tag from a different SemVer' >&2
   exit 1
 fi
+mismatch_dir="$SCRIPT_DIR/testdata/promote/fail-runner-mismatch"
+if bash "$SCRIPT_DIR/promote-preflight.sh" \
+  --qual "$mismatch_dir/release-qualification.json" \
+  --manifest "$mismatch_dir/qualification-manifest.json" \
+  --digest "$digest" --commit "$commit" --revision "$commit" \
+  --source-tag v0.3.0-rc.2 --final-tag v0.3.0; then
+  echo 'promotion preflight must reject runner digest mismatch between aggregate and manifest' >&2
+  exit 1
+fi
+grep -Fq 'plan_aliases()' "$SCRIPT_DIR/promote-aliases.sh"
+grep -Fq 'plan_aliases' "$promote_workflow"
+grep -Fq 'gh release upload' "$promote_workflow"
+[[ $(bash "$SCRIPT_DIR/promote-aliases.sh" '' '' "$digest") == CREATE ]] || { echo 'missing aliases must plan CREATE' >&2; exit 1; }
+[[ $(bash "$SCRIPT_DIR/promote-aliases.sh" "$digest" "$digest" "$digest") == OK ]] || { echo 'matching aliases must plan OK' >&2; exit 1; }
+if bash "$SCRIPT_DIR/promote-aliases.sh" '' 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' "$digest"; then
+  echo 'missing v-tag plus wrong plain tag must FAIL and not overwrite' >&2
+  exit 1
+fi
 if grep -Fq -- "grep -F 'deda-ado-'" "$SCRIPT_DIR/real/azure-pipelines.sh"; then
   echo 'Azure qualification must not pre-filter worker identities before validation' >&2
   exit 1

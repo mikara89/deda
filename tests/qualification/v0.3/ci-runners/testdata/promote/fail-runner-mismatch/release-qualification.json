@@ -5,7 +5,7 @@
   "candidate": {
     "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "deda": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "githubRunner": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "githubRunner": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     "azureRunner": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "gitlabRunner": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
   },

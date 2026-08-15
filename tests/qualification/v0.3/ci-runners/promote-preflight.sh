@@ -54,5 +54,12 @@ gitlab_digest=$(jq -r '.gitlabRunnerReferenceDigest // empty' "$manifest")
 [[ "$manifest_commit" == "$commit" ]] || die "qualification-manifest.json commit $manifest_commit does not match source commit $commit"
 [[ "$github_digest" == sha256:* && "$azure_digest" == sha256:* && "$gitlab_digest" == sha256:* ]] || die 'qualification-manifest.json is missing digest-pinned runner reference digests'
 evidence_commit=$(jq -r '.candidate.commit // empty' "$qual")
-[[ -z "$evidence_commit" || "$evidence_commit" == "$commit" ]] || die "release-qualification.json candidate commit $evidence_commit does not match source commit $commit"
+[[ -n "$evidence_commit" ]] || die 'release-qualification.json is missing candidate.commit'
+[[ "$evidence_commit" == "$commit" ]] || die "release-qualification.json candidate commit $evidence_commit does not match source commit $commit"
+qual_github=$(jq -r '.candidate.githubRunner // empty' "$qual")
+qual_azure=$(jq -r '.candidate.azureRunner // empty' "$qual")
+qual_gitlab=$(jq -r '.candidate.gitlabRunner // empty' "$qual")
+[[ "$qual_github" == "$github_digest" ]] || die "github runner digest mismatch between aggregate ($qual_github) and manifest ($github_digest)"
+[[ "$qual_azure" == "$azure_digest" ]] || die "azure runner digest mismatch between aggregate ($qual_azure) and manifest ($azure_digest)"
+[[ "$qual_gitlab" == "$gitlab_digest" ]] || die "gitlab runner digest mismatch between aggregate ($qual_gitlab) and manifest ($gitlab_digest)"
 note "promotion preflight passed for $source_tag -> $final_tag ($digest)"

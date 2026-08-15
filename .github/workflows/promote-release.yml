@@ -107,26 +107,21 @@ jobs:
           inspect_digest() {
             docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty'
           }
-          ensure_alias() {
-            local tag=$1 existing
-            existing=$(inspect_digest "${image}:${tag}" || true)
-            if [[ -n "$existing" ]]; then
-              [[ "$existing" == "$IMAGE_DIGEST" ]] || {
-                echo "tag ${tag} points to ${existing}, not qualified ${IMAGE_DIGEST}"
-                exit 1
-              }
-              echo "tag ${tag} already aliases ${IMAGE_DIGEST}"
-              return 0
-            fi
-            return 1
+          # shellcheck source=../../tests/qualification/v0.3/ci-runners/promote-aliases.sh
+          source tests/qualification/v0.3/ci-runners/promote-aliases.sh
+          v_existing=$(inspect_digest "${image}:${FINAL_TAG}" || true)
+          plain_existing=$(inspect_digest "${image}:${version}" || true)
+          plan=$(plan_aliases "$v_existing" "$plain_existing" "$IMAGE_DIGEST") || {
+            echo "refusing to overwrite a conflicting alias (v-tag=${v_existing:-missing} plain=${plain_existing:-missing} want=${IMAGE_DIGEST})"
+            exit 1
           }
-          if ensure_alias "$FINAL_TAG" && ensure_alias "$version"; then
-            echo "final image tags already alias the qualified digest"
-          else
+          if [[ "$plan" == CREATE ]]; then
             docker buildx imagetools create \
               -t "${image}:${FINAL_TAG}" \
               -t "${image}:${version}" \
               "${image}@${IMAGE_DIGEST}"
+          else
+            echo "final image tags already alias the qualified digest"
           fi
           published=$(inspect_digest "${image}:${FINAL_TAG}")
           [[ "$published" == "$IMAGE_DIGEST" ]] || {
@@ -160,11 +155,19 @@ jobs:
           IMAGE_DIGEST: ${{ inputs.image_digest }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          expected=$(find artifacts -type f -printf '%f\n' | sort)
           if gh release view "$FINAL_TAG" >/dev/null 2>&1; then
-            echo "final GitHub Release ${FINAL_TAG} already exists"
-            exit 0
+            echo "final GitHub Release ${FINAL_TAG} exists; repairing assets"
+            gh release upload "$FINAL_TAG" artifacts/* --clobber
+          else
+            gh release create "$FINAL_TAG" artifacts/* \
+              --verify-tag \
+              --title "$FINAL_TAG" \
+              --notes "Promoted from ${SOURCE_TAG} without rebuilding. Image identity is the qualified digest ${IMAGE_DIGEST}."
           fi
-          gh release create "$FINAL_TAG" artifacts/* \
-            --verify-tag \
-            --title "$FINAL_TAG" \
-            --notes "Promoted from ${SOURCE_TAG} without rebuilding. Image identity is the qualified digest ${IMAGE_DIGEST}."
+          actual=$(gh release view "$FINAL_TAG" --json assets --jq '.assets[].name' | sort)
+          [[ "$actual" == "$expected" ]] || {
+            echo "final release assets do not match RC artifacts"
+            printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$actual"
+            exit 1
+          }
