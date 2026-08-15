@@ -61,6 +61,13 @@ current implementation.
 | `deda_ci_observation_failures_total` | Counter | `provider` | Failed provider observations, including API, response validation, and configuration failures. |
 | `deda_ci_observation_age_seconds` | Observable gauge | `provider`, `service` | Age of the most recent successful queue observation. |
 
+During v0.3 CI runner qualification, retain these metrics alongside the Swarm
+task timeline: `deda_ci_required_capacity` proves queued-plus-active demand,
+`deda_ci_observations_total` and `deda_ci_api_requests_total` support cache
+evidence, and the failure counters distinguish provider errors from zero work.
+The qualification harness removes stale service observations on lifecycle
+changes; an old service name should no longer appear in the CI gauges.
+
 ### Scaling
 
 | Metric | Type | Dimensions | Meaning |

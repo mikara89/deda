@@ -92,3 +92,12 @@ that shutdown path.
 PR6 qualification must exercise downscaling while a job is active and prove
 that the job is not interrupted or abandoned. A runner example is not qualified
 solely because registration, idle scale-up, and idle scale-down succeed.
+
+## v0.3 release qualification
+
+The v0.3 harness runs these trigger implementations against a deterministic
+provider simulator and an actual Swarm deployment. It checks compatible queued
+plus active capacity, observation caching, fail-safe hold behavior, HA
+continuity, scale-to-zero recovery, and the runner drain contracts. Real GitHub,
+Azure, and GitLab runs are explicit operator actions and remain separate from
+normal CI. See [v0.3 CI runner qualification](../qualification/ci-runners-v0.3.md).

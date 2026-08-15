@@ -5,6 +5,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 ACTIVE_STACKS=()
 POLICY_CONTAINER=""
 POLICY_FILE=""
+SWARM_CREATED_BY_SMOKE=false
 
 remove_stack() {
   local stack=$1
@@ -31,7 +32,9 @@ cleanup() {
   for stack in "${ACTIVE_STACKS[@]}"; do
     remove_stack "$stack" || true
   done
-  docker swarm leave --force >/dev/null 2>&1 || true
+  if [[ "$SWARM_CREATED_BY_SMOKE" == "true" ]]; then
+    docker swarm leave --force >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
@@ -100,7 +103,10 @@ deploy_stack() {
   )
 }
 
-docker swarm init
+if [[ "$(docker info --format '{{.Swarm.LocalNodeState}}')" != "active" ]]; then
+  docker swarm init >/dev/null
+  SWARM_CREATED_BY_SMOKE=true
+fi
 
 # The image is the NativeAOT host. Exercise the operator credential-policy
 # startup path against the actual published binary, not only unit-test code.

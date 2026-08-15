@@ -46,6 +46,7 @@ jobs:
             "Deda.Triggers.Prometheus",
             "Deda.Triggers.Http",
             "Deda.Triggers.RabbitMq",
+            "Deda.Triggers.Ci",
             "Deda.Updates"
           )
           $bestByPackage = @{}
@@ -134,11 +135,16 @@ jobs:
       - name: Validate qualification harness (no cloud access)
         run: |
           find tests/qualification/v0.2/hetzner -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          find tests/qualification/v0.3/ci-runners -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
           if command -v shellcheck >/dev/null; then find tests/qualification/v0.2/hetzner -type f -name '*.sh' -print0 | xargs -0 shellcheck --exclude=SC1091; fi
+          if command -v shellcheck >/dev/null; then find tests/qualification/v0.3/ci-runners -type f -name '*.sh' -print0 | xargs -0 shellcheck --exclude=SC1091; fi
           jq empty tests/qualification/v0.2/hetzner/credential-policy.json.tpl
           bash tests/qualification/v0.2/hetzner/static-tests.sh
+          bash tests/qualification/v0.3/ci-runners/static-tests.sh
           (cd tests/qualification/v0.2/hetzner && DEDA_IMAGE=ghcr.io/example/deda:v0.2.0-rc.1 QUAL_SECRET_PREFIX=deda-qual-ci docker stack config -c stack.yml >/dev/null)
       - name: Build image
         run: docker build -f src/Deda.Host/Dockerfile -t deda:examples .
+      - name: Run fast deterministic CI-runner qualification
+        run: DEDA_IMAGE=deda:examples bash tests/qualification/v0.3/ci-runners/run-deterministic.sh --fast
       - name: Smoke-test representative examples
         run: bash tests/examples/run-smoke.sh

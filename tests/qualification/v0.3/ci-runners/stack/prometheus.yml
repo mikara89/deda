@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 2s
+scrape_configs:
+  - job_name: deda
+    dns_sd_configs:
+      - names: [tasks.deda]
+        type: A
+        port: 8080

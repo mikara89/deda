@@ -15,6 +15,7 @@ deeper only when needed.
 - [HTTP trigger](triggers/http.md)
 - [CI runner triggers](triggers/ci-runners.md)
 - [Autoscaled CI runner deployments](../examples/ci-runners/README.md)
+- [v0.3 CI runner qualification](qualification/ci-runners-v0.3.md)
 - [Scaling and scale-to-zero](scaling.md)
 - [Observability](observability.md)
 - [Optional Redis high availability](high-availability.md)
