@@ -36,6 +36,11 @@ grep -Fq 'snapshot_container_logs' "$SCRIPT_DIR/scenarios/04-active-job-protecti
 # shellcheck disable=SC2016
 grep -Fq -- 'head_branch == $ref' "$SCRIPT_DIR/real/github.sh"
 grep -Fq 'running_task_containers' "$SCRIPT_DIR/scenarios/04-active-job-protection.sh"
+grep -Fq 'latest_request_at()' "$SCRIPT_DIR/common.sh"
+if grep -nE 'requests\[\$baseline:\]' "$SCRIPT_DIR/common.sh" "$SCRIPT_DIR/scenarios/10-lifecycle-cleanup.sh"; then
+  echo 'request-log waits must use timestamps, not a capped buffer index' >&2
+  exit 1
+fi
 grep -Fq 'reference_digest()' "$SCRIPT_DIR/common.sh"
 grep -Fq 'build_runner_qualification_overlay' "$SCRIPT_DIR/common.sh"
 grep -Fq 'deda.qualification.candidateBaseDigest' "$SCRIPT_DIR/common.sh"

@@ -152,6 +152,8 @@ simulator_get() { docker run --rm --network "${DEDA_QUAL_STACK}_control" curlima
 simulator_put() { docker run --rm -i --network "${DEDA_QUAL_STACK}_control" curlimages/curl:8.10.1 -fsS -X POST -H 'content-type: application/json' --data-binary @- "$(simulator_url)/__admin/state"; }
 set_state() { printf '%s' "$1" | simulator_put >/dev/null; }
 request_count() { simulator_get /__admin/requests | jq -r .count; }
+request_total() { simulator_get /__admin/requests | jq -r '.total // .count'; }
+latest_request_at() { simulator_get /__admin/requests | jq -r '.requests[-1].at // "1970-01-01T00:00:00Z"'; }
 provider_request_count() {
   local fragment=$1
   simulator_get /__admin/requests | jq -r --arg fragment "$fragment" '[.requests[] | select(.endpoint | contains($fragment))] | length'
@@ -168,15 +170,15 @@ github_observation_greater_than() {
 }
 wait_for_provider_request_after() {
   local baseline=$1 description=$2
-  wait_until "$description" 45 bash -c "count=\$(docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/__admin/requests' | jq -r .count); (( count > $baseline ))" || fail_scenario "timed out waiting for $description"
+  wait_until "$description" 45 bash -c "total=\$(docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/__admin/requests' | jq -r '.total // .count'); (( total > $baseline ))" || fail_scenario "timed out waiting for $description"
 }
 wait_for_endpoint_observation_after() {
-  local baseline=$1 endpoint_fragment=$2 description=$3
-  wait_until "$description" 45 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/__admin/requests' | jq -e --argjson baseline '$baseline' --arg fragment '$endpoint_fragment' 'any(.requests[\$baseline:][]?; .endpoint | contains(\$fragment))' >/dev/null" || fail_scenario "timed out waiting for $description"
+  local since=$1 endpoint_fragment=$2 description=$3
+  wait_until "$description" 45 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/__admin/requests' | jq -e --arg since '$since' --arg fragment '$endpoint_fragment' 'any(.requests[]?; (.endpoint | contains(\$fragment)) and .at > \$since)' >/dev/null" || fail_scenario "timed out waiting for $description"
 }
 wait_for_all_provider_observations_after() {
-  local baseline=$1 description=$2
-  wait_until "$description" 60 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/__admin/requests' | jq -e --argjson baseline '$baseline' '[.requests[\$baseline:][].endpoint] as \$paths | ([\$paths[] | contains(\"/actions/\")] | any) and ([\$paths[] | contains(\"/_apis/\")] | any) and ([\$paths[] | contains(\"/api/v4/\")] | any)' >/dev/null" || fail_scenario "timed out waiting for $description"
+  local since=$1 description=$2
+  wait_until "$description" 60 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/__admin/requests' | jq -e --arg since '$since' '[.requests[] | select(.at > \$since) | .endpoint] as \$paths | ([\$paths[] | contains(\"/actions/\")] | any) and ([\$paths[] | contains(\"/_apis/\")] | any) and ([\$paths[] | contains(\"/api/v4/\")] | any)' >/dev/null" || fail_scenario "timed out waiting for $description"
 }
 redis_leader() { docker run --rm --network "${DEDA_QUAL_STACK}_control" redis:7-alpine redis-cli -h "$(service redis)" --raw GET deda-v03-qualification:leader 2>/dev/null || true; }
 

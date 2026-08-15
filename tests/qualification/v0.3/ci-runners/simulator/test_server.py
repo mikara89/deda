@@ -56,6 +56,15 @@ class SimulatorTests(unittest.TestCase):
         with self.assertRaises(json.JSONDecodeError):
             self.request("/api/v4/projects/group%2Frepo/jobs?page=1")
 
+    def test_request_log_keeps_monotonic_total_after_buffer_cap(self):
+        self.state({"reset": True})
+        for _ in range(502):
+            self.request("/repos/o/r/actions/runs?status=queued")
+        _, body = self.request("/__admin/requests")
+        self.assertEqual(body["count"], 500)
+        self.assertEqual(body["total"], 502)
+        self.assertEqual(body["requests"][-1]["seq"], 502)
+
     def test_status_200_body_overrides_normal_provider_response(self):
         self.state({"reset": True, "mode": {"status": 200, "body": "not-a-provider-document"}})
         _, body = self.request("/api/v4/projects/group%2Frepo/jobs?page=1")

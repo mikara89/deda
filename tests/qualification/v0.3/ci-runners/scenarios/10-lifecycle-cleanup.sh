@@ -39,9 +39,9 @@ new_service_id=$(docker service inspect "$old_service" --format '{{.ID}}')
 wait_until 'provider simulator health after stack redeploy' 90 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/healthz' >/dev/null" || fail_scenario 'simulator did not become healthy after stack redeploy'
 wait_until 'DEDA readiness after stack redeploy' 90 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS 'http://$(service deda):8080/health/ready' >/dev/null" || fail_scenario 'DEDA did not become ready after stack redeploy'
 set_state '{"github":{"runs":[{"id":1,"status":"queued"}],"jobs":[{"status":"queued","labels":["self-hosted","linux","deda"]}]}}'
-before=$(request_count)
+before=$(latest_request_at)
 dump_recreation_evidence "$SCENARIO_DIR/after-redeploy"
-if ! wait_until 'fresh GitHub provider observation after service recreation' 45 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/__admin/requests' | jq -e --argjson baseline '$before' --arg fragment '/actions/' 'any(.requests[\$baseline:][]?; .endpoint | contains(\$fragment))' >/dev/null"; then
+if ! wait_until 'fresh GitHub provider observation after service recreation' 45 bash -c "docker run --rm --network '${DEDA_QUAL_STACK}_control' curlimages/curl:8.10.1 -fsS '$(simulator_url)/__admin/requests' | jq -e --arg since '$before' --arg fragment '/actions/' 'any(.requests[]?; (.endpoint | contains(\$fragment)) and .at > \$since)' >/dev/null"; then
   dump_recreation_evidence "$SCENARIO_DIR/after-observation-timeout"
   fail_scenario 'timed out waiting for fresh GitHub provider observation after service recreation'
 fi

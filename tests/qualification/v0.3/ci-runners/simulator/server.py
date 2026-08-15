@@ -20,6 +20,7 @@ STATE = {
     "gitlab": {"jobs": []},
     "mode": {"status": 200, "body": None, "rawBody": None, "delaySeconds": 0},
     "requests": [],
+    "total": 0,
 }
 
 def utcnow():
@@ -52,7 +53,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def record(self, path):
         with LOCK:
-            STATE["requests"].append({"at": utcnow(), "endpoint": path, "mode": dict(STATE["mode"])})
+            STATE["total"] += 1
+            STATE["requests"].append({"at": utcnow(), "endpoint": path, "mode": dict(STATE["mode"]), "seq": STATE["total"]})
             del STATE["requests"][:-500]
             return dict(STATE["mode"])
 
@@ -81,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/__admin/state":
             with LOCK: return self.json(200, compact_state())
         if parsed.path == "/__admin/requests":
-            with LOCK: return self.json(200, {"requests": STATE["requests"], "count": len(STATE["requests"])})
+            with LOCK: return self.json(200, {"requests": STATE["requests"], "count": len(STATE["requests"]), "total": STATE["total"]})
         mode = self.record(parsed.path)
         if self.provider_error(mode): return
         query = parse_qs(parsed.query)
@@ -122,6 +124,7 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["azure"] = {"pools": [{"id": 1, "name": "deda"}], "jobs": []}
                 STATE["gitlab"] = {"jobs": []}
                 STATE["requests"] = []
+                STATE["total"] = 0
                 STATE["mode"] = {"status": 200, "body": None, "rawBody": None, "delaySeconds": 0}
             for provider in ("github", "azure", "gitlab"):
                 if provider in change:
