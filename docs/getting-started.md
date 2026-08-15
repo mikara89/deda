@@ -8,7 +8,7 @@ external metric source, and updates the Swarm service replica count.
 flowchart LR
     Service[Docker Swarm service<br/>with DEDA labels]
     DEDA[DEDA]
-    Metric[External metric source<br/>RabbitMQ, Prometheus, or HTTP]
+    Metric[External metric source<br/>RabbitMQ, Prometheus, HTTP, or CI]
     Swarm[Docker Swarm manager API]
 
     DEDA -->|GET metric| Metric

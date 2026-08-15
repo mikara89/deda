@@ -92,7 +92,7 @@ verification, service evaluation, and next steps.
 | RabbitMQ | Queue properties from the Management HTTP API | Queue consumers and task workers | [RabbitMQ](docs/triggers/rabbitmq.md) |
 | Prometheus | One scalar or exactly one instant-vector series | Application/exporter metrics and rates | [Prometheus](docs/triggers/prometheus.md) |
 | HTTP | One number from a GET response or JSON path | Small application-specific metric endpoints | [HTTP](docs/triggers/http.md) |
-| CI runners | Compatible queued plus active jobs | GitHub Actions, Azure Pipelines, and GitLab runners | [CI runners](docs/triggers/ci-runners.md) |
+| CI runners | Compatible queued plus active jobs | GitHub Actions, Azure Pipelines, and GitLab CI | [CI runners](docs/triggers/ci-runners.md) |
 
 Successful values must be finite and non-negative. Empty Prometheus vectors
 represent zero; ambiguous multi-series vectors are rejected. Trigger failures
@@ -188,7 +188,8 @@ credentials and never place passwords in service labels. See
 | `src/Deda.Controller` | Reconciliation and health |
 | `src/Deda.Swarm` | Docker Engine API client |
 | `src/Deda.Config.Labels` | Service-label parser |
-| `src/Deda.Triggers.*` | RabbitMQ, Prometheus, and HTTP adapters |
+| `src/Deda.Triggers.*` | RabbitMQ, Prometheus, HTTP, and CI adapters |
+| `src/Deda.Credentials` | Operator-owned credential policy and secret resolution |
 | `src/Deda.Policies` | Scaling policy |
 | `src/Deda.HA` | Optional Redis leader lease |
 | `src/Deda.Observability` | OpenTelemetry instrumentation |

@@ -6,6 +6,48 @@ All notable changes to DEDA are documented here. Releases follow
 
 ## [Unreleased]
 
+v0.3.0 release-candidate content. Tag `v0.3.0-rc.1` is a prerelease; it is not
+v0.3.0 final. Promotion requires deterministic PASS and real-provider PASS for
+GitHub Actions, Azure Pipelines, and GitLab CI. See
+[v0.3 CI runner qualification](docs/qualification/ci-runners-v0.3.md).
+
+### Added
+
+- GitHub Actions, Azure Pipelines, and GitLab CI queue triggers that observe
+  compatible provider work and scale a Swarm runner service.
+- Generic CI trigger abstraction shared by the three providers, including
+  observation caching (`refreshSeconds`) and fail-safe hold on API or semantic
+  failure.
+- Capacity model `required capacity = queued jobs + active jobs`. Queue-only
+  scaling is unsafe for ephemeral runners: once every runner has claimed work
+  the queue is empty, so a queue-only controller would scale the service down
+  while jobs are still running.
+- CI telemetry for queued jobs, active jobs, required capacity, observation
+  age, and provider API request volume.
+- Deterministic v0.3 qualification harness (fast and full) plus an explicit
+  opt-in real-provider path that stays `NOT_RUN` unless
+  `--confirm-real-provider-tests` is supplied.
+- Production Swarm runner examples with separate queue-observer and runner
+  registration credentials.
+
+### Changed
+
+- Lifecycle cleanup, HA failover continuity, and active-job-safe downscaling
+  for CI runner services. DEDA only changes desired replica count; runner
+  images own registration, deregistration, graceful drain, and local cleanup.
+- Runner examples use a 30-minute stop grace and job-aware drain so Swarm can
+  remove a busy task without abandoning the in-flight job.
+
+### Security
+
+- Credential policy bindings separate observer tokens from runner registration
+  tokens. Tokens are Docker secrets, never service labels.
+- `allowedHosts` is mandatory and fail-closed so a label cannot redirect a
+  token to an unexpected host.
+- GitHub Actions remain pinned to immutable commit SHAs. Qualification plans
+  must pin DEDA and runner images by `sha256` digest, never `latest` or a
+  mutable tag such as `v0.3`.
+
 ## v0.2.0 - 2026-08-14
 
 ### Changed
