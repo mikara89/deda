@@ -27,7 +27,12 @@ deterministic while Swarm still signals the actual GitHub, Azure, and GitLab
 runner entrypoints, so active-job protection is exercised under the same
 wrapper/PID1 path used by the release images.
 
-Full mode runs three real Swarm `5 → 0` drain cycles per provider. Real-provider
-qualification requires digest-pinned DEDA and runner images and binds its
-evidence to the deterministic candidate commit and image ID before `PASS` is
-allowed.
+Full mode runs three real Swarm `5 → 0` drain cycles per provider. A
+release-bound full run must set `DEDA_IMAGE` and
+`GITHUB_QUAL_RUNNER_IMAGE` / `AZURE_QUAL_RUNNER_IMAGE` /
+`GITLAB_QUAL_RUNNER_IMAGE` to `image@sha256:…` references **before**
+`run-deterministic.sh --full`. Otherwise the harness builds local mutable
+`:ci` runner tags, records null runner reference digests, and later real
+qualification cannot match the candidate. Use the same four digest pins and
+the same `RUN_ID` for `real/run-all.sh`. See
+[the qualification guide](../../../../docs/qualification/ci-runners-v0.3.md).
