@@ -9,15 +9,44 @@ capture_diagnostics_to "$root"
 commit=$(git rev-parse HEAD)
 printf '%s\n' "$commit" > "$root/candidate-commit.txt"
 git status --short > "$root/worktree-status.txt"
+overlay="$root/overlay-identity.json"
+if [[ ! -f "$overlay" ]]; then
+  write_overlay_identity "$overlay" 2>/dev/null || printf '%s\n' '{}' > "$overlay"
+fi
+if [[ ${DEDA_QUAL_MODE:-} == full ]]; then
+  jq -e '
+    .github.candidateBaseDigest != ""
+    and .github.labeledBaseDigest == .github.candidateBaseDigest
+    and .azure.candidateBaseDigest != ""
+    and .azure.labeledBaseDigest == .azure.candidateBaseDigest
+    and .gitlab.candidateBaseDigest != ""
+    and .gitlab.labeledBaseDigest == .gitlab.candidateBaseDigest
+  ' "$overlay" >/dev/null || die 'qualification overlays are not bound to the selected candidate bases'
+fi
 jq -n --arg runId "$RUN_ID" --arg collectedAt "$(utc_now)" --arg candidateCommit "$commit" \
   --arg candidateImage "$DEDA_IMAGE" --arg dedaImageDigest "$(image_digest "$DEDA_IMAGE")" \
   --arg githubRunnerImage "$GITHUB_RUNNER_CANDIDATE_IMAGE" --arg githubRunnerDigest "$(image_digest "$GITHUB_RUNNER_CANDIDATE_IMAGE")" \
-  --arg githubRunnerReferenceDigest "${GITHUB_RUNNER_CANDIDATE_IMAGE##*@}" \
+  --arg githubRunnerReferenceDigest "$(reference_digest "$GITHUB_RUNNER_CANDIDATE_IMAGE")" \
   --arg azureRunnerImage "$AZURE_RUNNER_CANDIDATE_IMAGE" --arg azureRunnerDigest "$(image_digest "$AZURE_RUNNER_CANDIDATE_IMAGE")" \
-  --arg azureRunnerReferenceDigest "${AZURE_RUNNER_CANDIDATE_IMAGE##*@}" \
+  --arg azureRunnerReferenceDigest "$(reference_digest "$AZURE_RUNNER_CANDIDATE_IMAGE")" \
   --arg gitlabRunnerImage "$GITLAB_RUNNER_CANDIDATE_IMAGE" --arg gitlabRunnerDigest "$(image_digest "$GITLAB_RUNNER_CANDIDATE_IMAGE")" \
-  --arg gitlabRunnerReferenceDigest "${GITLAB_RUNNER_CANDIDATE_IMAGE##*@}" \
-  '{runId:$runId,qualification:"v0.3-ci",collectedAt:$collectedAt,candidateCommit:$candidateCommit,candidateImage:$candidateImage,dedaImageDigest:$dedaImageDigest,githubRunnerImage:$githubRunnerImage,githubRunnerDigest:$githubRunnerDigest,githubRunnerReferenceDigest:$githubRunnerReferenceDigest,azureRunnerImage:$azureRunnerImage,azureRunnerDigest:$azureRunnerDigest,azureRunnerReferenceDigest:$azureRunnerReferenceDigest,gitlabRunnerImage:$gitlabRunnerImage,gitlabRunnerDigest:$gitlabRunnerDigest,gitlabRunnerReferenceDigest:$gitlabRunnerReferenceDigest,containsSecrets:false}' > "$root/manifest.json"
+  --arg gitlabRunnerReferenceDigest "$(reference_digest "$GITLAB_RUNNER_CANDIDATE_IMAGE")" \
+  --slurpfile overlayIdentity "$overlay" \
+  '{
+    runId:$runId,qualification:"v0.3-ci",collectedAt:$collectedAt,candidateCommit:$candidateCommit,
+    candidateImage:$candidateImage,dedaImageDigest:$dedaImageDigest,
+    githubRunnerImage:$githubRunnerImage,githubRunnerDigest:$githubRunnerDigest,
+    githubRunnerReferenceDigest:(if $githubRunnerReferenceDigest == "" then null else $githubRunnerReferenceDigest end),
+    azureRunnerImage:$azureRunnerImage,azureRunnerDigest:$azureRunnerDigest,
+    azureRunnerReferenceDigest:(if $azureRunnerReferenceDigest == "" then null else $azureRunnerReferenceDigest end),
+    gitlabRunnerImage:$gitlabRunnerImage,gitlabRunnerDigest:$gitlabRunnerDigest,
+    gitlabRunnerReferenceDigest:(if $gitlabRunnerReferenceDigest == "" then null else $gitlabRunnerReferenceDigest end),
+    github:{candidateBaseImage:$githubRunnerImage,candidateBaseDigest:$githubRunnerDigest,qualificationOverlayImageId:($overlayIdentity[0].github.qualificationOverlayImageId // null)},
+    azure:{candidateBaseImage:$azureRunnerImage,candidateBaseDigest:$azureRunnerDigest,qualificationOverlayImageId:($overlayIdentity[0].azure.qualificationOverlayImageId // null)},
+    gitlab:{candidateBaseImage:$gitlabRunnerImage,candidateBaseDigest:$gitlabRunnerDigest,qualificationOverlayImageId:($overlayIdentity[0].gitlab.qualificationOverlayImageId // null)},
+    overlayIdentity:($overlayIdentity[0] // null),
+    containsSecrets:false
+  }' > "$root/manifest.json"
 for id in 01 02 03 04 05 06 07 08 09 10; do
   dir="$root/scenario-$id"
   mkdir -p "$dir"

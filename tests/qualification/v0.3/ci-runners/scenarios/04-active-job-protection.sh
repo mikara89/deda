@@ -20,14 +20,24 @@ for provider in github azure gitlab; do
   for drain_run in $(seq 1 3); do
     drain_started_at=$(utc_now)
     set_state "$state"; wait_replicas "$service_name" 5; wait_running_tasks "$service_name" 5
+    mapfile -t drain_containers < <(running_task_containers "$service_name")
+    (( ${#drain_containers[@]} >= 5 )) || fail_scenario "$provider drain run $drain_run did not expose five running task containers"
+    log_file="$SCENARIO_DIR/$provider-swarm-drain-$drain_run.log"
+    snapshot_file="$SCENARIO_DIR/$provider-swarm-drain-$drain_run.snapshot.log"
+    pid_file="$SCENARIO_DIR/$provider-swarm-drain-$drain_run.pids"
+    : > "$log_file"
+    follow_container_logs "$drain_started_at" "$log_file" "$pid_file" "${drain_containers[@]}"
     started_jobs=0
     for _ in $(seq 1 90); do
-      started_jobs=$(docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" 2>/dev/null | grep -c "provider=$provider event=started" || true)
+      snapshot_container_logs "$snapshot_file" "${drain_containers[@]}"
+      started_jobs=$(count_log_matches "$snapshot_file" "provider=$provider event=started")
       (( started_jobs >= 5 )) && break
       sleep 1
     done
-    (( started_jobs >= 5 )) || fail_scenario "$provider drain run $drain_run did not start all five active jobs before downscale"
-    log_file="$SCENARIO_DIR/$provider-swarm-drain-$drain_run.log"
+    if (( started_jobs < 5 )); then
+      stop_followed_logs "$pid_file"
+      fail_scenario "$provider drain run $drain_run did not start all five active jobs before downscale"
+    fi
     set_state "$clear"; wait_replicas "$service_name" 0
     case "$provider" in
       github) drain_marker='runner exited during drain' ;;
@@ -36,18 +46,20 @@ for provider in github azure gitlab; do
     esac
     drain_marker_seen=false
     for _ in $(seq 1 150); do
-      if docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" 2>/dev/null | grep -Fq "$drain_marker"; then
+      snapshot_container_logs "$snapshot_file" "${drain_containers[@]}"
+      if grep -Fq "$drain_marker" "$log_file" "$snapshot_file"; then
         drain_marker_seen=true
         break
       fi
       sleep 1
     done
+    stop_followed_logs "$pid_file"
+    snapshot_container_logs "$snapshot_file" "${drain_containers[@]}"
+    cat "$snapshot_file" >> "$log_file" || true
     "$drain_marker_seen" || fail_scenario "$provider drain run $drain_run did not produce its completion marker"
-    docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" > "$log_file" 2>&1 \
-      || fail_scenario "could not collect $provider drain run $drain_run log"
     wait_running_tasks "$service_name" 0
-    docker service logs --since "$drain_started_at" --raw "$(service "$service_name")" >> "$log_file" 2>&1 \
-      || fail_scenario "could not collect completed $provider drain run $drain_run log"
+    snapshot_container_logs "$snapshot_file" "${drain_containers[@]}"
+    cat "$snapshot_file" >> "$log_file" || true
     case "$provider" in
       github)
         if ! grep -Fq 'preserving the active ephemeral job' "$log_file"; then

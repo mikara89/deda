@@ -26,12 +26,6 @@ export_real_candidate_images() {
   export AZURE_RUNNER_IMAGE="$AZURE_QUAL_RUNNER_IMAGE"
   export GITLAB_RUNNER_IMAGE="$GITLAB_QUAL_RUNNER_IMAGE"
 }
-image_digest() {
-  docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true
-}
-reference_digest() {
-  printf '%s\n' "${1##*@}"
-}
 write_real_candidate() {
   local provider=$1 file
   file="$(real_result_dir "$provider")/candidate.json"

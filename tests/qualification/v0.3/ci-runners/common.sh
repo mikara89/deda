@@ -27,6 +27,13 @@ export GITHUB_RUNNER_CANDIDATE_IMAGE AZURE_RUNNER_CANDIDATE_IMAGE GITLAB_RUNNER_
 
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 image_digest() { docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true; }
+image_label() { docker image inspect "$1" --format "{{index .Config.Labels \"$2\"}}" 2>/dev/null || true; }
+reference_digest() {
+  case "$1" in
+    *@sha256:*) printf '%s\n' "${1##*@}" ;;
+    *) printf '\n' ;;
+  esac
+}
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 note() { printf '[v0.3 qualification] %s\n' "$*"; }
 require() { command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"; }
@@ -94,6 +101,43 @@ wait_until() {
 
 replicas() { docker service inspect "$(service "$1")" --format '{{.Spec.Mode.Replicated.Replicas}}' 2>/dev/null; }
 running_tasks() { docker service ps "$(service "$1")" --filter desired-state=running --format '{{.CurrentState}}' 2>/dev/null | grep -c '^Running' || true; }
+running_task_containers() {
+  local task container
+  while IFS= read -r task; do
+    container=$(docker inspect --format '{{.Status.ContainerStatus.ContainerID}}' "$task" 2>/dev/null || true)
+    [[ -n "$container" ]] && printf '%s\n' "$container"
+  done < <(docker service ps --no-trunc "$(service "$1")" --filter desired-state=running --format '{{.ID}}')
+}
+snapshot_container_logs() {
+  local dest=$1 container
+  shift
+  : > "$dest"
+  for container in "$@"; do
+    [[ -n "$container" ]] || continue
+    docker logs "$container" >> "$dest" 2>/dev/null || true
+  done
+}
+count_log_matches() { grep -c -- "$2" "$1" 2>/dev/null || true; }
+follow_container_logs() {
+  local since=$1 dest=$2 pidfile=$3 container
+  shift 3
+  : > "$pidfile"
+  for container in "$@"; do
+    [[ -n "$container" ]] || continue
+    docker logs -f --since "$since" "$container" >> "$dest" 2>&1 &
+    printf '%s\n' "$!" >> "$pidfile"
+  done
+}
+stop_followed_logs() {
+  local pidfile=$1 pid
+  [[ -f "$pidfile" ]] || return 0
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done < "$pidfile"
+  rm -f "$pidfile"
+}
 wait_replicas() {
   local name=$1 expected=$2
   wait_until "$(service "$name") desired replicas=$expected" 90 bash -c "[[ \"\$(docker service inspect '$(service "$name")' --format '{{.Spec.Mode.Replicated.Replicas}}' 2>/dev/null || true)\" == '$expected' ]]" || fail_scenario "timed out waiting for $(service "$name") desired replicas=$expected"
@@ -187,19 +231,54 @@ ensure_runner_images() {
   fi
 }
 
+build_runner_qualification_overlay() {
+  local dockerfile=$1 base=$2 tag=$3
+  local base_digest
+  base_digest=$(image_digest "$base")
+  [[ -n "$base_digest" ]] || die "candidate base image '$base' is not present locally"
+  docker build -f "$SCRIPT_DIR/simulator/real-runner/$dockerfile" \
+    --build-arg BASE_IMAGE="$base" \
+    --label "deda.qualification.candidateBaseImage=$base" \
+    --label "deda.qualification.candidateBaseDigest=$base_digest" \
+    -t "$tag" "$SCRIPT_DIR/simulator/real-runner" >/dev/null
+  [[ "$(image_label "$tag" deda.qualification.candidateBaseDigest)" == "$base_digest" ]] \
+    || die "qualification overlay $tag is not bound to candidate $base"
+}
+
+write_overlay_identity() {
+  local dest=$1
+  jq -n \
+    --arg githubCandidateBaseImage "$GITHUB_RUNNER_CANDIDATE_IMAGE" \
+    --arg githubCandidateBaseDigest "$(image_digest "$GITHUB_RUNNER_CANDIDATE_IMAGE")" \
+    --arg githubQualificationOverlayImage "$GITHUB_RUNNER_QUALIFICATION_IMAGE" \
+    --arg githubQualificationOverlayImageId "$(image_digest "$GITHUB_RUNNER_QUALIFICATION_IMAGE")" \
+    --arg githubOverlayLabeledBase "$(image_label "$GITHUB_RUNNER_QUALIFICATION_IMAGE" deda.qualification.candidateBaseImage)" \
+    --arg githubOverlayLabeledDigest "$(image_label "$GITHUB_RUNNER_QUALIFICATION_IMAGE" deda.qualification.candidateBaseDigest)" \
+    --arg azureCandidateBaseImage "$AZURE_RUNNER_CANDIDATE_IMAGE" \
+    --arg azureCandidateBaseDigest "$(image_digest "$AZURE_RUNNER_CANDIDATE_IMAGE")" \
+    --arg azureQualificationOverlayImage "$AZURE_RUNNER_QUALIFICATION_IMAGE" \
+    --arg azureQualificationOverlayImageId "$(image_digest "$AZURE_RUNNER_QUALIFICATION_IMAGE")" \
+    --arg azureOverlayLabeledBase "$(image_label "$AZURE_RUNNER_QUALIFICATION_IMAGE" deda.qualification.candidateBaseImage)" \
+    --arg azureOverlayLabeledDigest "$(image_label "$AZURE_RUNNER_QUALIFICATION_IMAGE" deda.qualification.candidateBaseDigest)" \
+    --arg gitlabCandidateBaseImage "$GITLAB_RUNNER_CANDIDATE_IMAGE" \
+    --arg gitlabCandidateBaseDigest "$(image_digest "$GITLAB_RUNNER_CANDIDATE_IMAGE")" \
+    --arg gitlabQualificationOverlayImage "$GITLAB_RUNNER_QUALIFICATION_IMAGE" \
+    --arg gitlabQualificationOverlayImageId "$(image_digest "$GITLAB_RUNNER_QUALIFICATION_IMAGE")" \
+    --arg gitlabOverlayLabeledBase "$(image_label "$GITLAB_RUNNER_QUALIFICATION_IMAGE" deda.qualification.candidateBaseImage)" \
+    --arg gitlabOverlayLabeledDigest "$(image_label "$GITLAB_RUNNER_QUALIFICATION_IMAGE" deda.qualification.candidateBaseDigest)" \
+    '{github:{candidateBaseImage:$githubCandidateBaseImage,candidateBaseDigest:$githubCandidateBaseDigest,qualificationOverlayImage:$githubQualificationOverlayImage,qualificationOverlayImageId:$githubQualificationOverlayImageId,labeledBaseImage:$githubOverlayLabeledBase,labeledBaseDigest:$githubOverlayLabeledDigest},azure:{candidateBaseImage:$azureCandidateBaseImage,candidateBaseDigest:$azureCandidateBaseDigest,qualificationOverlayImage:$azureQualificationOverlayImage,qualificationOverlayImageId:$azureQualificationOverlayImageId,labeledBaseImage:$azureOverlayLabeledBase,labeledBaseDigest:$azureOverlayLabeledDigest},gitlab:{candidateBaseImage:$gitlabCandidateBaseImage,candidateBaseDigest:$gitlabCandidateBaseDigest,qualificationOverlayImage:$gitlabQualificationOverlayImage,qualificationOverlayImageId:$gitlabQualificationOverlayImageId,labeledBaseImage:$gitlabOverlayLabeledBase,labeledBaseDigest:$gitlabOverlayLabeledDigest}}' > "$dest"
+}
+
 ensure_runner_qualification_images() {
   local github_base=${GITHUB_RUNNER_CANDIDATE_IMAGE} azure_base=${AZURE_RUNNER_CANDIDATE_IMAGE} gitlab_base=${GITLAB_RUNNER_CANDIDATE_IMAGE}
   if [[ "$github_base" == "deda-github-runner:ci" || "$azure_base" == "deda-azure-runner:ci" || "$gitlab_base" == "deda-gitlab-runner:ci" ]]; then
     ensure_runner_images
   fi
-  if ! docker image inspect "$GITHUB_RUNNER_QUALIFICATION_IMAGE" >/dev/null 2>&1; then
-    docker build -f "$SCRIPT_DIR/simulator/real-runner/github.Dockerfile" --build-arg BASE_IMAGE="$github_base" -t "$GITHUB_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
-  fi
-  if ! docker image inspect "$AZURE_RUNNER_QUALIFICATION_IMAGE" >/dev/null 2>&1; then
-    docker build -f "$SCRIPT_DIR/simulator/real-runner/azure.Dockerfile" --build-arg BASE_IMAGE="$azure_base" -t "$AZURE_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
-  fi
-  if ! docker image inspect "$GITLAB_RUNNER_QUALIFICATION_IMAGE" >/dev/null 2>&1; then
-    docker build -f "$SCRIPT_DIR/simulator/real-runner/gitlab.Dockerfile" --build-arg BASE_IMAGE="$gitlab_base" -t "$GITLAB_RUNNER_QUALIFICATION_IMAGE" "$SCRIPT_DIR/simulator/real-runner"
+  build_runner_qualification_overlay github.Dockerfile "$github_base" "$GITHUB_RUNNER_QUALIFICATION_IMAGE"
+  build_runner_qualification_overlay azure.Dockerfile "$azure_base" "$AZURE_RUNNER_QUALIFICATION_IMAGE"
+  build_runner_qualification_overlay gitlab.Dockerfile "$gitlab_base" "$GITLAB_RUNNER_QUALIFICATION_IMAGE"
+  if [[ -n ${RUN_ID:-} ]]; then
+    write_overlay_identity "$(result_root)/overlay-identity.json"
   fi
 }
 

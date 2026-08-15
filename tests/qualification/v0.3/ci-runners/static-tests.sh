@@ -27,8 +27,43 @@ grep -Fq 'fastQualification' "$SCRIPT_DIR/collect-evidence.sh"
 grep -Fq 'refusing to replace an unrelated resource' "$SCRIPT_DIR/real/common.sh"
 grep -Fq 'real_stack_name' "$SCRIPT_DIR/real/common.sh"
 grep -Fq 'deda_ci_required_capacity' "$SCRIPT_DIR/real/common.sh"
-grep -Fq -- '--since "$drain_started_at" --raw' "$SCRIPT_DIR/scenarios/04-active-job-protection.sh"
+# shellcheck disable=SC2016
+grep -Fq -- 'follow_container_logs "$drain_started_at" "$log_file" "$pid_file"' "$SCRIPT_DIR/scenarios/04-active-job-protection.sh"
+grep -Fq 'snapshot_container_logs' "$SCRIPT_DIR/scenarios/04-active-job-protection.sh"
+# shellcheck disable=SC2016
 grep -Fq -- 'head_branch == $ref' "$SCRIPT_DIR/real/github.sh"
+grep -Fq 'running_task_containers' "$SCRIPT_DIR/scenarios/04-active-job-protection.sh"
+grep -Fq 'reference_digest()' "$SCRIPT_DIR/common.sh"
+grep -Fq 'build_runner_qualification_overlay' "$SCRIPT_DIR/common.sh"
+grep -Fq 'deda.qualification.candidateBaseDigest' "$SCRIPT_DIR/common.sh"
+grep -Fq 'qualificationOverlayImageId' "$SCRIPT_DIR/collect-evidence.sh"
+if grep -E 'if ! docker image inspect "\$[A-Z_]*QUALIFICATION_IMAGE"' "$SCRIPT_DIR/common.sh"; then
+  echo 'qualification overlays must be rebuilt from the selected candidate base every full run' >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if grep -nF '${IMAGE##*@}' "$SCRIPT_DIR/collect-evidence.sh" "$SCRIPT_DIR/common.sh" "$SCRIPT_DIR/real/common.sh"; then
+  echo 'candidate reference digests must use reference_digest, not unquoted ##*@ parsing' >&2
+  exit 1
+fi
+if grep -nE 'ReferenceDigest="\$\{[A-Z_]+##\*@\}"' "$SCRIPT_DIR/collect-evidence.sh" "$SCRIPT_DIR/real/common.sh"; then
+  echo 'candidate reference digests must use the shared reference_digest helper' >&2
+  exit 1
+fi
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/common.sh"
+[[ $(reference_digest 'ghcr.io/x/runner@sha256:abc') == sha256:abc ]] || { echo 'reference_digest must extract sha256 pins' >&2; exit 1; }
+[[ -z $(reference_digest 'deda-github-runner:ci') ]] || { echo 'reference_digest must be empty for mutable local tags' >&2; exit 1; }
+[[ -z $(reference_digest 'ghcr.io/x/runner:latest') ]] || { echo 'reference_digest must be empty for mutable registry tags' >&2; exit 1; }
+for file in github.Dockerfile azure.Dockerfile gitlab.Dockerfile; do
+  grep -Fq 'ARG BASE_IMAGE' "$SCRIPT_DIR/simulator/real-runner/$file"
+  # shellcheck disable=SC2016
+  grep -Fq 'FROM ${BASE_IMAGE}' "$SCRIPT_DIR/simulator/real-runner/$file"
+done
+if [[ -f "$SCRIPT_DIR/../../../../.github/workflows/full-deterministic-temp.yml" ]]; then
+  echo 'temporary full-deterministic workflow must not remain in the branch' >&2
+  exit 1
+fi
 if grep -Fq -- "grep -F 'deda-ado-'" "$SCRIPT_DIR/real/azure-pipelines.sh"; then
   echo 'Azure qualification must not pre-filter worker identities before validation' >&2
   exit 1
