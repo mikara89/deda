@@ -53,8 +53,10 @@ v0.3.0 final. Promotion requires `releaseQualification` PASS, then the
 - Image publish sets `flavor: latest=false` so a prerelease tag cannot move
   `latest`; `latest` is applied only from `main`.
 - `docker-publish.yml` rebuilds only `v*.*.*-*` prerelease tags. Stable
-  `vMAJOR.MINOR.PATCH` promotion is `promote-release.yml`, which aliases the
-  qualified digest and reuses RC artifacts.
+  `vMAJOR.MINOR.PATCH` promotion is `promote-release.yml`, which verifies
+  attached `releaseQualification=PASS` evidence, aliases the qualified
+  digest, and reuses RC artifacts. Promotion is idempotent for a matching
+  digest/commit and refuses a `final_tag` from a different SemVer.
 - Digest-pinned qualification fails unless the checkout SHA equals the image
   `org.opencontainers.image.revision`.
 

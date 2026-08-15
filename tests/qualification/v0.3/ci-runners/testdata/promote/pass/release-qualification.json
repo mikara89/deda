@@ -1,0 +1,14 @@
+{
+  "fullDeterministicQualification": "PASS",
+  "candidateMatched": true,
+  "releaseQualification": "PASS",
+  "candidate": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "deda": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "providers": [
+    {"provider": "github", "status": "PASS"},
+    {"provider": "azure-pipelines", "status": "PASS"},
+    {"provider": "gitlab", "status": "PASS"}
+  ]
+}

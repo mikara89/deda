@@ -91,6 +91,45 @@ grep -Fq 'assert_candidate_source_binding' "$SCRIPT_DIR/run-deterministic.sh"
 grep -Fq 'assert_candidate_source_binding' "$SCRIPT_DIR/real/common.sh"
 grep -Fq 'org.opencontainers.image.revision' "$SCRIPT_DIR/common.sh"
 grep -Fq 'candidateImageRevision' "$SCRIPT_DIR/collect-evidence.sh"
+grep -Fq 'promote-preflight.sh' "$promote_workflow"
+grep -Fq 'release-qualification.json' "$promote_workflow"
+grep -Fq 'releaseQualification == "PASS"' "$SCRIPT_DIR/promote-preflight.sh"
+grep -Fq 'candidateMatched == true' "$SCRIPT_DIR/promote-preflight.sh"
+grep -Fq 'expected_final' "$SCRIPT_DIR/promote-preflight.sh"
+download_line=$(grep -n 'gh release download' "$promote_workflow" | head -n1 | cut -d: -f1)
+preflight_line=$(grep -n 'promote-preflight.sh' "$promote_workflow" | head -n1 | cut -d: -f1)
+alias_line=$(grep -n 'imagetools create' "$promote_workflow" | head -n1 | cut -d: -f1)
+[[ -n "$download_line" && -n "$preflight_line" && -n "$alias_line" ]] || { echo 'promotion workflow is missing download, preflight, or alias steps' >&2; exit 1; }
+(( download_line < preflight_line && preflight_line < alias_line )) || { echo 'promotion must download and verify evidence before mutating aliases' >&2; exit 1; }
+if grep -nE 'final tag .* already exists' "$promote_workflow" | grep -v 'points to'; then
+  echo 'promotion must treat a correct existing final tag as success' >&2
+  exit 1
+fi
+pass_dir="$SCRIPT_DIR/testdata/promote/pass"
+fail_dir="$SCRIPT_DIR/testdata/promote/fail-not-run"
+digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+commit='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+bash "$SCRIPT_DIR/promote-preflight.sh" \
+  --qual "$pass_dir/release-qualification.json" \
+  --manifest "$pass_dir/qualification-manifest.json" \
+  --digest "$digest" --commit "$commit" --revision "$commit" \
+  --source-tag v0.3.0-rc.2 --final-tag v0.3.0
+if bash "$SCRIPT_DIR/promote-preflight.sh" \
+  --qual "$fail_dir/release-qualification.json" \
+  --manifest "$fail_dir/qualification-manifest.json" \
+  --digest "$digest" --commit "$commit" --revision "$commit" \
+  --source-tag v0.3.0-rc.2 --final-tag v0.3.0; then
+  echo 'promotion preflight must reject NOT_RUN real-provider evidence' >&2
+  exit 1
+fi
+if bash "$SCRIPT_DIR/promote-preflight.sh" \
+  --qual "$pass_dir/release-qualification.json" \
+  --manifest "$pass_dir/qualification-manifest.json" \
+  --digest "$digest" --commit "$commit" --revision "$commit" \
+  --source-tag v0.3.0-rc.2 --final-tag v9.0.0; then
+  echo 'promotion preflight must reject a final_tag from a different SemVer' >&2
+  exit 1
+fi
 if grep -Fq -- "grep -F 'deda-ado-'" "$SCRIPT_DIR/real/azure-pipelines.sh"; then
   echo 'Azure qualification must not pre-filter worker identities before validation' >&2
   exit 1

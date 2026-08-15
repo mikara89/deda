@@ -46,25 +46,6 @@ jobs:
             exit 1
           }
 
-      - name: Validate tag and digest inputs
-        env:
-          SOURCE_TAG: ${{ inputs.source_tag }}
-          FINAL_TAG: ${{ inputs.final_tag }}
-          IMAGE_DIGEST: ${{ inputs.image_digest }}
-        run: |
-          [[ "$SOURCE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-.+$ ]] || {
-            echo "source_tag must be a prerelease (vMAJOR.MINOR.PATCH-*), got: $SOURCE_TAG"
-            exit 1
-          }
-          [[ "$FINAL_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "final_tag must be a stable version (vMAJOR.MINOR.PATCH), got: $FINAL_TAG"
-            exit 1
-          }
-          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-            echo "image_digest must be sha256: plus 64 hex chars, got: $IMAGE_DIGEST"
-            exit 1
-          }
-
       - name: Checkout the qualified source tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,12 +63,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify source image identity
+      - name: Download RC artifacts and qualification evidence
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts
+          gh release download "$SOURCE_TAG" --dir artifacts
+          test -f artifacts/release-qualification.json
+          test -f artifacts/qualification-manifest.json
+
+      - name: Verify qualification evidence and image identity
         env:
           SOURCE_TAG: ${{ inputs.source_tag }}
           FINAL_TAG: ${{ inputs.final_tag }}
           IMAGE_DIGEST: ${{ inputs.image_digest }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           source_digest=$(docker buildx imagetools inspect "${image}:${SOURCE_TAG}" --format '{{json .Manifest}}' | jq -r .digest)
@@ -98,22 +88,14 @@ jobs:
           docker pull "${image}@${IMAGE_DIGEST}"
           revision=$(docker image inspect "${image}@${IMAGE_DIGEST}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
           checkout=$(git rev-parse HEAD)
-          [[ -n "$revision" ]] || {
-            echo "qualified image has no org.opencontainers.image.revision"
-            exit 1
-          }
-          [[ "$revision" == "$checkout" ]] || {
-            echo "image revision ${revision} != source tag commit ${checkout}"
-            exit 1
-          }
-          if git rev-parse "$FINAL_TAG" >/dev/null 2>&1; then
-            echo "final tag ${FINAL_TAG} already exists"
-            exit 1
-          fi
-          if gh release view "$FINAL_TAG" >/dev/null 2>&1; then
-            echo "final GitHub Release ${FINAL_TAG} already exists"
-            exit 1
-          fi
+          bash tests/qualification/v0.3/ci-runners/promote-preflight.sh \
+            --qual artifacts/release-qualification.json \
+            --manifest artifacts/qualification-manifest.json \
+            --digest "$IMAGE_DIGEST" \
+            --commit "$checkout" \
+            --revision "$revision" \
+            --source-tag "$SOURCE_TAG" \
+            --final-tag "$FINAL_TAG"
 
       - name: Alias qualified digest to final tags
         env:
@@ -122,11 +104,31 @@ jobs:
         run: |
           image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           version="${FINAL_TAG#v}"
-          docker buildx imagetools create \
-            -t "${image}:${FINAL_TAG}" \
-            -t "${image}:${version}" \
-            "${image}@${IMAGE_DIGEST}"
-          published=$(docker buildx imagetools inspect "${image}:${FINAL_TAG}" --format '{{json .Manifest}}' | jq -r .digest)
+          inspect_digest() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty'
+          }
+          ensure_alias() {
+            local tag=$1 existing
+            existing=$(inspect_digest "${image}:${tag}" || true)
+            if [[ -n "$existing" ]]; then
+              [[ "$existing" == "$IMAGE_DIGEST" ]] || {
+                echo "tag ${tag} points to ${existing}, not qualified ${IMAGE_DIGEST}"
+                exit 1
+              }
+              echo "tag ${tag} already aliases ${IMAGE_DIGEST}"
+              return 0
+            fi
+            return 1
+          }
+          if ensure_alias "$FINAL_TAG" && ensure_alias "$version"; then
+            echo "final image tags already alias the qualified digest"
+          else
+            docker buildx imagetools create \
+              -t "${image}:${FINAL_TAG}" \
+              -t "${image}:${version}" \
+              "${image}@${IMAGE_DIGEST}"
+          fi
+          published=$(inspect_digest "${image}:${FINAL_TAG}")
           [[ "$published" == "$IMAGE_DIGEST" ]] || {
             echo "promoted ${FINAL_TAG} digest ${published} != qualified ${IMAGE_DIGEST}"
             exit 1
@@ -138,18 +140,31 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$FINAL_TAG" HEAD -m "$FINAL_TAG"
+          checkout=$(git rev-parse HEAD)
+          if git rev-parse -q --verify "refs/tags/${FINAL_TAG}" >/dev/null; then
+            existing=$(git rev-parse "${FINAL_TAG}^{commit}")
+            [[ "$existing" == "$checkout" ]] || {
+              echo "final tag ${FINAL_TAG} points to ${existing}, not qualified commit ${checkout}"
+              exit 1
+            }
+            echo "final git tag already points at the qualified commit"
+          else
+            git tag -a "$FINAL_TAG" HEAD -m "$FINAL_TAG"
+          fi
           git push origin "refs/tags/${FINAL_TAG}"
 
       - name: Create GitHub Release from RC artifacts
         env:
           SOURCE_TAG: ${{ inputs.source_tag }}
           FINAL_TAG: ${{ inputs.final_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p artifacts
-          gh release download "$SOURCE_TAG" --dir artifacts
+          if gh release view "$FINAL_TAG" >/dev/null 2>&1; then
+            echo "final GitHub Release ${FINAL_TAG} already exists"
+            exit 0
+          fi
           gh release create "$FINAL_TAG" artifacts/* \
             --verify-tag \
             --title "$FINAL_TAG" \
-            --notes "Promoted from ${SOURCE_TAG} without rebuilding. Image identity is the qualified digest ${{ inputs.image_digest }}."
+            --notes "Promoted from ${SOURCE_TAG} without rebuilding. Image identity is the qualified digest ${IMAGE_DIGEST}."

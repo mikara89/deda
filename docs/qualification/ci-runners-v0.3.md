@@ -128,14 +128,25 @@ hand. `.github/workflows/docker-publish.yml` rebuilds only prerelease tags
 path. If a rebuild is ever required, that new digest must go through this
 path again.
 
-After `releaseQualification` PASS, dispatch
-`.github/workflows/promote-release.yml` with `confirm_promote=true`, the
-qualified RC tag, the qualified `sha256` digest, and `final_tag=v0.3.0`.
-The workflow verifies the source tag digest and
-`org.opencontainers.image.revision`, aliases those tags to the same digest,
-creates the final git tag on the RC commit, and copies the RC CLI archives,
-checksums, and SBOM into the final GitHub Release. It does not run
-`docker build` or `dotnet publish`.
+After `releaseQualification` PASS, attach the sanitized aggregate to the RC
+GitHub Release, then dispatch `.github/workflows/promote-release.yml` with
+`confirm_promote=true`, the qualified RC tag, the qualified `sha256` digest,
+and a `final_tag` whose base SemVer matches the RC (`v0.3.0-rc.2` →
+`v0.3.0`):
+
+```bash
+gh release upload v0.3.0-rc.2 \
+  tests/qualification/results/$RUN_ID/v0.3-ci/real-provider-result.json#release-qualification.json \
+  tests/qualification/results/$RUN_ID/v0.3-ci/manifest.json#qualification-manifest.json
+```
+
+The workflow downloads those files **before** any image alias or tag
+mutation. It refuses unless `releaseQualification` is `PASS`, all three
+real providers are `PASS`, `candidateMatched` is true, the manifest pin
+equals the supplied digest, runner reference digests are present, and the
+image OCI revision equals the RC commit. Existing `:v0.3.0` tags, git tags,
+or GitHub Releases are accepted only when they already identify that same
+digest and commit. It does not run `docker build` or `dotnet publish`.
 
 ## Operator prerequisites
 

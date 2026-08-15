@@ -38,3 +38,14 @@ matching full-deterministic `result.json`, manifest, and candidate identity.
 It becomes `PASS` only when full deterministic qualification is `PASS`, all
 three provider results pass, and candidate binding succeeds; any provider or
 candidate failure produces `FAIL`/`NOT_QUALIFIED`.
+
+Attach the sanitized aggregate to the RC GitHub Release before promotion:
+
+```bash
+gh release upload "$RC_TAG" \
+  "$(result directory)/real-provider-result.json#release-qualification.json" \
+  "$(result directory)/manifest.json#qualification-manifest.json"
+```
+
+`promote-release.yml` refuses to alias `:v0.3.0` unless those files report
+`releaseQualification=PASS`.
