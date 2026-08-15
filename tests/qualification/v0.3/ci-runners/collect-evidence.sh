@@ -7,7 +7,10 @@ RUN_ID=$2; export RUN_ID
 root=$(result_root); mkdir -p "$root"
 capture_diagnostics_to "$root"
 commit=$(git rev-parse HEAD)
+assert_candidate_source_binding
+image_revision=$(image_oci_revision "$DEDA_IMAGE")
 printf '%s\n' "$commit" > "$root/candidate-commit.txt"
+printf '%s\n' "$image_revision" > "$root/candidate-image-revision.txt"
 git status --short > "$root/worktree-status.txt"
 overlay="$root/overlay-identity.json"
 if [[ ! -f "$overlay" ]]; then
@@ -24,6 +27,7 @@ if [[ ${DEDA_QUAL_MODE:-} == full ]]; then
   ' "$overlay" >/dev/null || die 'qualification overlays are not bound to the selected candidate bases'
 fi
 jq -n --arg runId "$RUN_ID" --arg collectedAt "$(utc_now)" --arg candidateCommit "$commit" \
+  --arg candidateImageRevision "$image_revision" \
   --arg candidateImage "$DEDA_IMAGE" --arg dedaImageDigest "$(image_digest "$DEDA_IMAGE")" \
   --arg githubRunnerImage "$GITHUB_RUNNER_CANDIDATE_IMAGE" --arg githubRunnerDigest "$(image_digest "$GITHUB_RUNNER_CANDIDATE_IMAGE")" \
   --arg githubRunnerReferenceDigest "$(reference_digest "$GITHUB_RUNNER_CANDIDATE_IMAGE")" \
@@ -33,7 +37,7 @@ jq -n --arg runId "$RUN_ID" --arg collectedAt "$(utc_now)" --arg candidateCommit
   --arg gitlabRunnerReferenceDigest "$(reference_digest "$GITLAB_RUNNER_CANDIDATE_IMAGE")" \
   --slurpfile overlayIdentity "$overlay" \
   '{
-    runId:$runId,qualification:"v0.3-ci",collectedAt:$collectedAt,candidateCommit:$candidateCommit,
+    runId:$runId,qualification:"v0.3-ci",collectedAt:$collectedAt,candidateCommit:$candidateCommit,candidateImageRevision:(if $candidateImageRevision == "" then null else $candidateImageRevision end),
     candidateImage:$candidateImage,dedaImageDigest:$dedaImageDigest,
     githubRunnerImage:$githubRunnerImage,githubRunnerDigest:$githubRunnerDigest,
     githubRunnerReferenceDigest:(if $githubRunnerReferenceDigest == "" then null else $githubRunnerReferenceDigest end),

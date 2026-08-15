@@ -1,0 +1,173 @@
+name: Promote qualified release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Qualified prerelease tag (e.g. v0.3.0-rc.2)
+        required: true
+        type: string
+      image_digest:
+        description: Qualified immutable digest (sha256:...)
+        required: true
+        type: string
+      final_tag:
+        description: Final version tag (e.g. v0.3.0)
+        required: true
+        type: string
+      confirm_promote:
+        description: Must be true; aliases the digest and does not rebuild
+        required: true
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Alias qualified digest and publish final release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Require explicit promotion confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm_promote }}
+        run: |
+          [[ "$CONFIRM" == "true" ]] || {
+            echo "Promotion requires confirm_promote=true; refusing."
+            exit 1
+          }
+
+      - name: Checkout the qualified source tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ inputs.source_tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download RC artifacts and qualification evidence
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts
+          gh release download "$SOURCE_TAG" --dir artifacts
+          test -f artifacts/release-qualification.json
+          test -f artifacts/qualification-manifest.json
+
+      - name: Verify qualification evidence and image identity
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          FINAL_TAG: ${{ inputs.final_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          source_digest=$(docker buildx imagetools inspect "${image}:${SOURCE_TAG}" --format '{{json .Manifest}}' | jq -r .digest)
+          [[ "$source_digest" == "$IMAGE_DIGEST" ]] || {
+            echo "source tag ${SOURCE_TAG} digest ${source_digest} != provided ${IMAGE_DIGEST}"
+            exit 1
+          }
+          docker pull "${image}@${IMAGE_DIGEST}"
+          revision=$(docker image inspect "${image}@${IMAGE_DIGEST}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+          checkout=$(git rev-parse HEAD)
+          bash tests/qualification/v0.3/ci-runners/promote-preflight.sh \
+            --qual artifacts/release-qualification.json \
+            --manifest artifacts/qualification-manifest.json \
+            --digest "$IMAGE_DIGEST" \
+            --commit "$checkout" \
+            --revision "$revision" \
+            --source-tag "$SOURCE_TAG" \
+            --final-tag "$FINAL_TAG"
+
+      - name: Alias qualified digest to final tags
+        env:
+          FINAL_TAG: ${{ inputs.final_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          version="${FINAL_TAG#v}"
+          inspect_digest() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty'
+          }
+          # shellcheck source=../../tests/qualification/v0.3/ci-runners/promote-aliases.sh
+          source tests/qualification/v0.3/ci-runners/promote-aliases.sh
+          v_existing=$(inspect_digest "${image}:${FINAL_TAG}" || true)
+          plain_existing=$(inspect_digest "${image}:${version}" || true)
+          plan=$(plan_aliases "$v_existing" "$plain_existing" "$IMAGE_DIGEST") || {
+            echo "refusing to overwrite a conflicting alias (v-tag=${v_existing:-missing} plain=${plain_existing:-missing} want=${IMAGE_DIGEST})"
+            exit 1
+          }
+          if [[ "$plan" == CREATE ]]; then
+            docker buildx imagetools create \
+              -t "${image}:${FINAL_TAG}" \
+              -t "${image}:${version}" \
+              "${image}@${IMAGE_DIGEST}"
+          else
+            echo "final image tags already alias the qualified digest"
+          fi
+          published=$(inspect_digest "${image}:${FINAL_TAG}")
+          [[ "$published" == "$IMAGE_DIGEST" ]] || {
+            echo "promoted ${FINAL_TAG} digest ${published} != qualified ${IMAGE_DIGEST}"
+            exit 1
+          }
+
+      - name: Create final git tag on the qualified commit
+        env:
+          FINAL_TAG: ${{ inputs.final_tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          checkout=$(git rev-parse HEAD)
+          if git rev-parse -q --verify "refs/tags/${FINAL_TAG}" >/dev/null; then
+            existing=$(git rev-parse "${FINAL_TAG}^{commit}")
+            [[ "$existing" == "$checkout" ]] || {
+              echo "final tag ${FINAL_TAG} points to ${existing}, not qualified commit ${checkout}"
+              exit 1
+            }
+            echo "final git tag already points at the qualified commit"
+          else
+            git tag -a "$FINAL_TAG" HEAD -m "$FINAL_TAG"
+          fi
+          git push origin "refs/tags/${FINAL_TAG}"
+
+      - name: Create GitHub Release from RC artifacts
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          FINAL_TAG: ${{ inputs.final_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          expected=$(find artifacts -type f -printf '%f\n' | sort)
+          if gh release view "$FINAL_TAG" >/dev/null 2>&1; then
+            echo "final GitHub Release ${FINAL_TAG} exists; repairing assets"
+            gh release upload "$FINAL_TAG" artifacts/* --clobber
+          else
+            gh release create "$FINAL_TAG" artifacts/* \
+              --verify-tag \
+              --title "$FINAL_TAG" \
+              --notes "Promoted from ${SOURCE_TAG} without rebuilding. Image identity is the qualified digest ${IMAGE_DIGEST}."
+          fi
+          actual=$(gh release view "$FINAL_TAG" --json assets --jq '.assets[].name' | sort)
+          [[ "$actual" == "$expected" ]] || {
+            echo "final release assets do not match RC artifacts"
+            printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$actual"
+            exit 1
+          }

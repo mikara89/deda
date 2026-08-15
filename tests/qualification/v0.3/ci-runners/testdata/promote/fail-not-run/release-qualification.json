@@ -1,0 +1,13 @@
+{
+  "fullDeterministicQualification": "PASS",
+  "candidateMatched": true,
+  "releaseQualification": "NOT_QUALIFIED",
+  "candidate": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "providers": [
+    {"provider": "github", "status": "NOT_RUN"},
+    {"provider": "azure-pipelines", "status": "NOT_RUN"},
+    {"provider": "gitlab", "status": "NOT_RUN"}
+  ]
+}

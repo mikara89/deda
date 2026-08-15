@@ -1,0 +1,17 @@
+{
+  "fullDeterministicQualification": "PASS",
+  "candidateMatched": true,
+  "releaseQualification": "PASS",
+  "candidate": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "deda": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "githubRunner": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "azureRunner": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "gitlabRunner": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "providers": [
+    {"provider": "github", "status": "PASS"},
+    {"provider": "azure-pipelines", "status": "PASS"},
+    {"provider": "gitlab", "status": "PASS"}
+  ]
+}

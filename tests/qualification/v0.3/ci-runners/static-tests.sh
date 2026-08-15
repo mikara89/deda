@@ -73,6 +73,81 @@ if [[ -f "$SCRIPT_DIR/../../../../.github/workflows/full-deterministic-temp.yml"
   echo 'temporary full-deterministic workflow must not remain in the branch' >&2
   exit 1
 fi
+publish_workflow="$SCRIPT_DIR/../../../../.github/workflows/docker-publish.yml"
+promote_workflow="$SCRIPT_DIR/../../../../.github/workflows/promote-release.yml"
+grep -Fq 'tags: ["v*.*.*-*"]' "$publish_workflow" || { echo 'docker-publish must rebuild only prerelease tags' >&2; exit 1; }
+if grep -Fq 'tags: ["v*.*.*"]' "$publish_workflow"; then
+  echo 'docker-publish must not rebuild stable vMAJOR.MINOR.PATCH tags' >&2
+  exit 1
+fi
+test -f "$promote_workflow"
+grep -Fq 'confirm_promote' "$promote_workflow"
+if grep -nE 'dotnet publish' "$promote_workflow" || grep -nE 'docker build' "$promote_workflow" | grep -v 'docker buildx'; then
+  echo 'promotion must alias a qualified digest and must not rebuild' >&2
+  exit 1
+fi
+grep -Fq 'assert_candidate_source_binding()' "$SCRIPT_DIR/common.sh"
+grep -Fq 'assert_candidate_source_binding' "$SCRIPT_DIR/run-deterministic.sh"
+grep -Fq 'assert_candidate_source_binding' "$SCRIPT_DIR/real/common.sh"
+grep -Fq 'org.opencontainers.image.revision' "$SCRIPT_DIR/common.sh"
+grep -Fq 'candidateImageRevision' "$SCRIPT_DIR/collect-evidence.sh"
+grep -Fq 'promote-preflight.sh' "$promote_workflow"
+grep -Fq 'release-qualification.json' "$promote_workflow"
+grep -Fq 'releaseQualification == "PASS"' "$SCRIPT_DIR/promote-preflight.sh"
+grep -Fq 'candidateMatched == true' "$SCRIPT_DIR/promote-preflight.sh"
+grep -Fq 'expected_final' "$SCRIPT_DIR/promote-preflight.sh"
+download_line=$(grep -n 'gh release download' "$promote_workflow" | head -n1 | cut -d: -f1)
+preflight_line=$(grep -n 'promote-preflight.sh' "$promote_workflow" | head -n1 | cut -d: -f1)
+alias_line=$(grep -n 'imagetools create' "$promote_workflow" | head -n1 | cut -d: -f1)
+[[ -n "$download_line" && -n "$preflight_line" && -n "$alias_line" ]] || { echo 'promotion workflow is missing download, preflight, or alias steps' >&2; exit 1; }
+(( download_line < preflight_line && preflight_line < alias_line )) || { echo 'promotion must download and verify evidence before mutating aliases' >&2; exit 1; }
+if grep -nE 'final tag .* already exists' "$promote_workflow" | grep -v 'points to'; then
+  echo 'promotion must treat a correct existing final tag as success' >&2
+  exit 1
+fi
+pass_dir="$SCRIPT_DIR/testdata/promote/pass"
+fail_dir="$SCRIPT_DIR/testdata/promote/fail-not-run"
+digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+commit='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+bash "$SCRIPT_DIR/promote-preflight.sh" \
+  --qual "$pass_dir/release-qualification.json" \
+  --manifest "$pass_dir/qualification-manifest.json" \
+  --digest "$digest" --commit "$commit" --revision "$commit" \
+  --source-tag v0.3.0-rc.2 --final-tag v0.3.0
+if bash "$SCRIPT_DIR/promote-preflight.sh" \
+  --qual "$fail_dir/release-qualification.json" \
+  --manifest "$fail_dir/qualification-manifest.json" \
+  --digest "$digest" --commit "$commit" --revision "$commit" \
+  --source-tag v0.3.0-rc.2 --final-tag v0.3.0; then
+  echo 'promotion preflight must reject NOT_RUN real-provider evidence' >&2
+  exit 1
+fi
+if bash "$SCRIPT_DIR/promote-preflight.sh" \
+  --qual "$pass_dir/release-qualification.json" \
+  --manifest "$pass_dir/qualification-manifest.json" \
+  --digest "$digest" --commit "$commit" --revision "$commit" \
+  --source-tag v0.3.0-rc.2 --final-tag v9.0.0; then
+  echo 'promotion preflight must reject a final_tag from a different SemVer' >&2
+  exit 1
+fi
+mismatch_dir="$SCRIPT_DIR/testdata/promote/fail-runner-mismatch"
+if bash "$SCRIPT_DIR/promote-preflight.sh" \
+  --qual "$mismatch_dir/release-qualification.json" \
+  --manifest "$mismatch_dir/qualification-manifest.json" \
+  --digest "$digest" --commit "$commit" --revision "$commit" \
+  --source-tag v0.3.0-rc.2 --final-tag v0.3.0; then
+  echo 'promotion preflight must reject runner digest mismatch between aggregate and manifest' >&2
+  exit 1
+fi
+grep -Fq 'plan_aliases()' "$SCRIPT_DIR/promote-aliases.sh"
+grep -Fq 'plan_aliases' "$promote_workflow"
+grep -Fq 'gh release upload' "$promote_workflow"
+[[ $(bash "$SCRIPT_DIR/promote-aliases.sh" '' '' "$digest") == CREATE ]] || { echo 'missing aliases must plan CREATE' >&2; exit 1; }
+[[ $(bash "$SCRIPT_DIR/promote-aliases.sh" "$digest" "$digest" "$digest") == OK ]] || { echo 'matching aliases must plan OK' >&2; exit 1; }
+if bash "$SCRIPT_DIR/promote-aliases.sh" '' 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' "$digest"; then
+  echo 'missing v-tag plus wrong plain tag must FAIL and not overwrite' >&2
+  exit 1
+fi
 if grep -Fq -- "grep -F 'deda-ado-'" "$SCRIPT_DIR/real/azure-pipelines.sh"; then
   echo 'Azure qualification must not pre-filter worker identities before validation' >&2
   exit 1
