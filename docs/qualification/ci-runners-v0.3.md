@@ -33,7 +33,7 @@ These statuses are not interchangeable:
 | `fastQualification` | `run-deterministic.sh --fast` (simulator + Swarm) | Fast deterministic scenarios passed. |
 | `fullDeterministicQualification` | `run-deterministic.sh --full` (real runner entrypoints + fake provider) | Full deterministic scenarios passed. |
 | Real-provider GitHub Actions / Azure Pipelines / GitLab CI | Operator-run `real/*.sh --confirm-real-provider-tests` | That SaaS provider completed `0 → N → 0` with correlated jobs. |
-| `releaseQualification` | Aggregate of full deterministic PASS **and** all three real-provider PASS, bound to the same commit and digest-pinned images | The candidate may be promoted to v0.3.0 final. |
+| `releaseQualification` | Aggregate of full deterministic PASS **and** all three real-provider PASS, bound to the same commit and the same four `image@sha256:…` pins | The qualified digest may be **aliased** to v0.3.0 final. |
 
 ```text
 fastQualification PASS  ≠  releaseQualification PASS
@@ -109,23 +109,42 @@ failure makes release qualification `FAIL`; `NOT_RUN` is never converted into
 ## Promotion path
 
 ```text
-v0.3.0-rc.1
-    → fullDeterministicQualification PASS
+v0.3.0-rc.1 image@sha256:AAAA  (and three runner image@sha256 pins)
+    → fullDeterministicQualification PASS  (same four digest pins)
     → real GitHub Actions PASS
     → real Azure Pipelines PASS
     → real GitLab CI PASS
-    → same commit + same sha256 image digests
+    → same commit + same four sha256 digests
     → releaseQualification PASS
-    → tag v0.3.0 final
+    → alias sha256:AAAA to :v0.3.0 / :0.3.0   (no rebuild)
 ```
 
-Do not promote from `fastQualification` alone. Do not retag a mutable
-`v0.3` / `latest` image; publish and qualify only `image@sha256:…` references.
+Do not promote from `fastQualification` alone. Do not `git tag v0.3.0` to
+finish the release: `.github/workflows/docker-publish.yml` rebuilds a new
+unverified manifest on every version tag, so the final digest would not be
+the digest that was qualified. If a rebuild is ever required, that new digest
+must go through this path again.
+
+Promote the already-signed RC digest with the same `imagetools` pattern the
+publish job uses:
+
+```bash
+# After releaseQualification PASS on ghcr.io/mikara89/deda@sha256:AAAA
+docker buildx imagetools create \
+  -t ghcr.io/mikara89/deda:v0.3.0 \
+  -t ghcr.io/mikara89/deda:0.3.0 \
+  ghcr.io/mikara89/deda@sha256:AAAA
+```
+
+Reuse the RC GitHub Release CLI archives, checksums, and SBOM for the final
+`v0.3.0` GitHub Release. Do not retag `latest` or a floating `v0.3` as the
+qualified identity.
 
 ## Operator prerequisites
 
 - A Swarm manager with Docker CLI access for deterministic mode.
-- An immutable candidate `DEDA_IMAGE` (`image@sha256:…`); never qualify
+- Four immutable candidate images (`image@sha256:…`): DEDA plus the GitHub
+  Actions, Azure Pipelines, and GitLab CI runner images. Never qualify
   `latest`, `v0.3`, or any other mutable tag.
 - For real mode: dedicated existing GitHub repository/workflow, Azure
   organization/project/pipeline/agent pool, and GitLab project/ref/runner
@@ -133,20 +152,67 @@ Do not promote from `fastQualification` alone. Do not retag a mutable
 - Queue and registration tokens supplied only as readable files; do not place
   them in labels, result files, or command output.
 
-## Deterministic commands
+## Publish operator-owned runner images
 
-Build a local candidate only for development. Qualification of an RC must use
-the published digest from the GitHub Release / GHCR workflow:
+This repository does not publish the three runner images. Operators build and
+push them to a registry they control, then pin the resulting manifest digests.
+Use the checksums from the example Dockerfiles / CI job:
 
 ```bash
+# GitHub Actions
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg RUNNER_SHA256_AMD64=048024cd2c848eb6f14d5646d56c13a4def2ae7ee3ad12122bee960c56f3d271 \
+  --build-arg RUNNER_SHA256_ARM64=f44255bd3e80160eb25f71bc83d06ea025f6908748807a584687b3184759f7e4 \
+  -t REGISTRY/deda-github-runner:v0.3.0-rc.1 \
+  --push examples/ci-runners/github-actions
+
+# Azure Pipelines
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg AGENT_SHA256_AMD64=828220fc662131f8d6bd427c8d8b9bffae064a9b1532b7e448d58766276b31fa \
+  --build-arg AGENT_SHA256_ARM64=bd61a2526333403a6d76243a49846887a1dd8eb115bbce6b037c950c2118f138 \
+  -t REGISTRY/deda-azure-runner:v0.3.0-rc.1 \
+  --push examples/ci-runners/azure-pipelines
+
+# GitLab CI
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t REGISTRY/deda-gitlab-runner:v0.3.0-rc.1 \
+  --push examples/ci-runners/gitlab
+```
+
+Capture each immutable digest (do not keep using the mutable `:v0.3.0-rc.1` tag):
+
+```bash
+digest_of() {
+  docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r .digest
+}
+export GITHUB_QUAL_RUNNER_IMAGE="REGISTRY/deda-github-runner@$(digest_of REGISTRY/deda-github-runner:v0.3.0-rc.1)"
+export AZURE_QUAL_RUNNER_IMAGE="REGISTRY/deda-azure-runner@$(digest_of REGISTRY/deda-azure-runner:v0.3.0-rc.1)"
+export GITLAB_QUAL_RUNNER_IMAGE="REGISTRY/deda-gitlab-runner@$(digest_of REGISTRY/deda-gitlab-runner:v0.3.0-rc.1)"
+```
+
+## Deterministic commands
+
+Build a local candidate only for development. A release-bound full run must
+export **all four** digest pins **before** `--full`. Omitting the runner pins
+builds local `:ci` tags, records null runner reference digests, and makes
+later real-provider `candidateMatched` fail even if every SaaS run PASSes.
+
+```bash
+export RUN_ID=v0.3.0-rc.1
 export DEDA_IMAGE=ghcr.io/mikara89/deda@sha256:<rc-manifest-digest>
+export GITHUB_QUAL_RUNNER_IMAGE=REGISTRY/deda-github-runner@sha256:<digest>
+export AZURE_QUAL_RUNNER_IMAGE=REGISTRY/deda-azure-runner@sha256:<digest>
+export GITLAB_QUAL_RUNNER_IMAGE=REGISTRY/deda-gitlab-runner@sha256:<digest>
+
 bash tests/qualification/v0.3/ci-runners/run-deterministic.sh --fast
 bash tests/qualification/v0.3/ci-runners/run-deterministic.sh --full
 ```
 
-Or dispatch `.github/workflows/ci-runner-qualification.yml` with `mode=fast` or
-`mode=full` and `confirm_real_provider_tests=false`. That workflow never runs
-real SaaS tests.
+Dispatching `.github/workflows/ci-runner-qualification.yml` with `mode=fast`
+or `mode=full` and `confirm_real_provider_tests=false` never calls SaaS. That
+workflow builds a local `deda:qualification` image and is **not** release
+evidence: it does not bind the published RC digest or the three runner
+digests.
 
 ## Real-provider readiness (do not run accidentally)
 
@@ -155,14 +221,13 @@ operator-only. Credentials alone are not authorization. Every command requires
 `--confirm-real-provider-tests`. This repository's v0.3.0-rc.1 preparation
 **must not** execute these commands.
 
-Required digest-pinned images:
+Reuse the **same** `RUN_ID` and the **same** four digest pins as the full
+deterministic run (`REAL_DEDA_IMAGE` must equal `DEDA_IMAGE`):
 
 ```bash
-export REAL_DEDA_IMAGE=ghcr.io/mikara89/deda@sha256:<rc-manifest-digest>
-export GITHUB_QUAL_RUNNER_IMAGE=<registry>/deda-github-runner@sha256:<digest>
-export AZURE_QUAL_RUNNER_IMAGE=<registry>/deda-azure-runner@sha256:<digest>
-export GITLAB_QUAL_RUNNER_IMAGE=<registry>/deda-gitlab-runner@sha256:<digest>
-export RUN_ID=<same-id-as-full-deterministic-run>
+export REAL_DEDA_IMAGE="$DEDA_IMAGE"
+# GITHUB_QUAL_RUNNER_IMAGE, AZURE_QUAL_RUNNER_IMAGE, GITLAB_QUAL_RUNNER_IMAGE,
+# and RUN_ID remain set from the full deterministic run.
 ```
 
 Required secret files (never labels or environment token values):

@@ -13,9 +13,12 @@ used by `run-deterministic.sh`. Both runs must also use the same digest-pinned
 
 All four candidate image variables are mandatory and must be immutable
 `image@sha256:...` references: `REAL_DEDA_IMAGE`, `GITHUB_QUAL_RUNNER_IMAGE`,
-`AZURE_QUAL_RUNNER_IMAGE`, and `GITLAB_QUAL_RUNNER_IMAGE`. The harness records
-image IDs and refuses a release `PASS` unless the deterministic and real
-manifests identify the same DEDA candidate.
+`AZURE_QUAL_RUNNER_IMAGE`, and `GITLAB_QUAL_RUNNER_IMAGE`. Set those same four
+pins **before** the matching `run-deterministic.sh --full` run; otherwise the
+deterministic manifest records null runner reference digests and
+`candidateMatched` stays false. The harness records image IDs and refuses a
+release `PASS` unless the deterministic and real manifests identify the same
+DEDA candidate and the same three runner reference digests.
 
 `run-all.sh` deploys a dedicated Swarm stack for each provider using the runner
 registration files, then submits the configured GitHub Actions, Azure Pipelines,

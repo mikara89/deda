@@ -7,8 +7,9 @@ All notable changes to DEDA are documented here. Releases follow
 ## [Unreleased]
 
 v0.3.0 release-candidate content. Tag `v0.3.0-rc.1` is a prerelease; it is not
-v0.3.0 final. Promotion requires deterministic PASS and real-provider PASS for
-GitHub Actions, Azure Pipelines, and GitLab CI. See
+v0.3.0 final. Promotion requires `releaseQualification` PASS, then aliasing the
+**same** qualified `sha256` digest to `v0.3.0`. Tagging `v0.3.0` rebuilds a new
+unverified image and is not the promotion path. See
 [v0.3 CI runner qualification](docs/qualification/ci-runners-v0.3.md).
 
 ### Added
@@ -45,8 +46,11 @@ GitHub Actions, Azure Pipelines, and GitLab CI. See
 - `allowedHosts` is mandatory and fail-closed so a label cannot redirect a
   token to an unexpected host.
 - GitHub Actions remain pinned to immutable commit SHAs. Qualification plans
-  must pin DEDA and runner images by `sha256` digest, never `latest` or a
+  must pin DEDA and all three runner images by `sha256` digest before both the
+  full deterministic run and the real-provider run, never `latest` or a
   mutable tag such as `v0.3`.
+- Image publish sets `flavor: latest=false` so a prerelease tag cannot move
+  `latest`; `latest` is applied only from `main`.
 
 ## v0.2.0 - 2026-08-14
 
