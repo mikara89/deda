@@ -265,6 +265,13 @@ bash tests/qualification/v0.3/ci-runners/real/run-all.sh --confirm-real-provider
 Individual providers: `real/github.sh`, `real/azure-pipelines.sh`,
 `real/gitlab.sh`, each with the same confirmation flag.
 
-The v0.2 Hetzner harness remains the approved reusable foundation for an
-explicit, dry-run-capable multi-manager cloud qualification. It does not run
-because `HCLOUD_TOKEN` exists and never sends that token to VMs.
+The v0.3 Hetzner wrapper in
+[`tests/qualification/v0.3/hetzner`](../../tests/qualification/v0.3/hetzner/README.md)
+is the operator path for release qualification of a published RC on one
+temporary Swarm manager. It invokes the canonical scripts in this directory
+over Docker-over-SSH and does not rebuild DEDA or promote a release.
+
+The v0.2 Hetzner harness remains the approved reusable foundation for
+explicit, dry-run-capable multi-manager / HA cloud qualification. Neither
+harness runs because `HCLOUD_TOKEN` exists, and neither sends that token to
+VMs.

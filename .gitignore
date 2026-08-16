@@ -124,6 +124,7 @@ appsettings.Production.json
 appsettings.Secrets.json
 secrets.json
 tests/qualification/v0.2/hetzner/.runtime/
+tests/qualification/v0.3/hetzner/.runtime/
 tests/qualification/results/
 *.pfx
 *.p12
