@@ -61,6 +61,20 @@ if grep -nE 'ReferenceDigest="\$\{[A-Z_]+##\*@\}"' "$SCRIPT_DIR/collect-evidence
 fi
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/common.sh"
+grep -Fq 'docker service update --detach=true' "$SCRIPT_DIR/common.sh" || { echo 'update_ephemeral_service must use non-blocking docker service update' >&2; exit 1; }
+grep -Fq 'update_ephemeral_service()' "$SCRIPT_DIR/common.sh" || { echo 'missing update_ephemeral_service helper' >&2; exit 1; }
+[[ $(grep -c 'update_ephemeral_service --label-add com.deda.autoscale.trigger.refreshSeconds=' "$SCRIPT_DIR/scenarios/06-observation-cache.sh") == 2 ]] || {
+  echo 'scenario 06 must change refreshSeconds twice through update_ephemeral_service' >&2
+  exit 1
+}
+if grep -nE 'docker service update' "$SCRIPT_DIR/scenarios/06-observation-cache.sh" | grep -v -- '--detach'; then
+  echo 'scenario 06 must not issue a blocking docker service update' >&2
+  exit 1
+fi
+if grep -nE 'docker service update' "$SCRIPT_DIR/scenarios/03-gitlab-capacity.sh" | grep -v -- '--detach'; then
+  echo 'scenario 03 must not issue a blocking docker service update against the ephemeral GitLab runner' >&2
+  exit 1
+fi
 [[ $(reference_digest 'ghcr.io/x/runner@sha256:abc') == sha256:abc ]] || { echo 'reference_digest must extract sha256 pins' >&2; exit 1; }
 [[ -z $(reference_digest 'deda-github-runner:ci') ]] || { echo 'reference_digest must be empty for mutable local tags' >&2; exit 1; }
 [[ -z $(reference_digest 'ghcr.io/x/runner:latest') ]] || { echo 'reference_digest must be empty for mutable registry tags' >&2; exit 1; }
@@ -152,9 +166,100 @@ if grep -Fq -- "grep -F 'deda-ado-'" "$SCRIPT_DIR/real/azure-pipelines.sh"; then
   echo 'Azure qualification must not pre-filter worker identities before validation' >&2
   exit 1
 fi
+mock_dir=$(mktemp -d)
+trap 'rm -rf "$mock_dir"; rm -f "$SCRIPT_DIR/stack/credential-policy.json"' EXIT
+cat > "$mock_dir/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+log=${DEDA_QUAL_DOCKER_MOCK_LOG:?}
+printf '%s\n' "$*" >> "$log"
+if [[ "${1:-}" == service && "${2:-}" == update ]]; then
+  detach=0
+  for arg in "$@"; do
+    if [[ "$arg" == --detach || "$arg" == --detach=true ]]; then
+      detach=1
+    fi
+  done
+  if (( detach == 0 )); then
+    while [[ -e "${DEDA_QUAL_DOCKER_MOCK_BLOCK:-}" ]]; do
+      sleep 0.1
+    done
+    exit 99
+  fi
+  if [[ -n "${DEDA_QUAL_DOCKER_MOCK_OBS:-}" ]]; then
+    current=$(cat "${DEDA_QUAL_DOCKER_MOCK_OBS}.count" 2>/dev/null || printf '0')
+    printf '%s\n' $((current + 1)) > "${DEDA_QUAL_DOCKER_MOCK_OBS}.count"
+  fi
+  exit 0
+fi
+if [[ "${1:-}" == service && "${2:-}" == scale ]]; then
+  exit 0
+fi
+if [[ "${1:-}" == service && "${2:-}" == ps ]]; then
+  printf '%s\n' 'Running 1 second ago'
+  exit 0
+fi
+if [[ "${1:-}" == run ]]; then
+  if printf '%s' "$*" | grep -Fq '/metrics'; then
+    count=$(cat "${DEDA_QUAL_DOCKER_MOCK_OBS}.count" 2>/dev/null || printf '1')
+    printf 'deda_ci_observations_total{provider="github-actions"} %s\n' "$count"
+    exit 0
+  fi
+  printf '%s\n' '{}'
+  exit 0
+fi
+exit 0
+EOF
+chmod 755 "$mock_dir/docker"
+export DEDA_QUAL_DOCKER_MOCK_LOG="$mock_dir/docker.log"
+export DEDA_QUAL_DOCKER_MOCK_OBS="$mock_dir/obs"
+export DEDA_QUAL_DOCKER_MOCK_BLOCK="$mock_dir/block"
+printf '1\n' > "$mock_dir/obs.count"
+: > "$DEDA_QUAL_DOCKER_MOCK_LOG"
+: > "$DEDA_QUAL_DOCKER_MOCK_BLOCK"
+saved_path=$PATH
+export PATH="$mock_dir:$PATH"
+
+update_ephemeral_service --label-add com.deda.autoscale.trigger.refreshSeconds=15 deda-v03-qual_github-runner >/dev/null
+update_ephemeral_service --label-add com.deda.autoscale.trigger.refreshSeconds=1 deda-v03-qual_github-runner >/dev/null
+[[ $(grep -c 'service update --detach=true' "$DEDA_QUAL_DOCKER_MOCK_LOG") == 2 ]] || {
+  echo 'update_ephemeral_service did not issue two detached service updates' >&2
+  exit 1
+}
+if grep -E 'service update' "$DEDA_QUAL_DOCKER_MOCK_LOG" | grep -v -- '--detach=true'; then
+  echo 'update_ephemeral_service issued a blocking service update' >&2
+  exit 1
+fi
+
+"$mock_dir/docker" service update --label-add com.deda.autoscale.trigger.refreshSeconds=15 deda-v03-qual_github-runner >/dev/null &
+blocker=$!
+sleep 1
+if ! kill -0 "$blocker" 2>/dev/null; then
+  echo 'blocking docker service update returned immediately; mock did not simulate convergence hang' >&2
+  exit 1
+fi
+rm -f "$DEDA_QUAL_DOCKER_MOCK_BLOCK"
+wait "$blocker" 2>/dev/null || true
+
+printf '1\n' > "$mock_dir/obs.count"
+baseline=$(github_observations)
+update_ephemeral_service --label-add com.deda.autoscale.trigger.refreshSeconds=15 deda-v03-qual_github-runner >/dev/null
+github_observation_greater_than "$baseline" || {
+  echo 'detached label change did not surface a fresh mocked GitHub observation' >&2
+  exit 1
+}
+before_invalidation=$(github_observations)
+update_ephemeral_service --label-add com.deda.autoscale.trigger.refreshSeconds=1 deda-v03-qual_github-runner >/dev/null
+github_observation_greater_than "$before_invalidation" || {
+  echo 'detached invalidation update did not surface a fresh mocked GitHub observation' >&2
+  exit 1
+}
+
+export PATH=$saved_path
+unset DEDA_QUAL_DOCKER_MOCK_LOG DEDA_QUAL_DOCKER_MOCK_OBS DEDA_QUAL_DOCKER_MOCK_BLOCK
+
 if command -v docker >/dev/null 2>&1; then
   policy="$SCRIPT_DIR/stack/credential-policy.json"
-  trap 'rm -f "$policy"' EXIT
   sed -e 's/__GITHUB_SERVICE__/deda-qual-static_github-runner/g' -e 's/__AZURE_SERVICE__/deda-qual-static_azure-runner/g' -e 's/__GITLAB_SERVICE__/deda-qual-static_gitlab-runner/g' "$SCRIPT_DIR/stack/credential-policy.json.tpl" > "$policy"
   (cd "$SCRIPT_DIR/stack" && DEDA_IMAGE=deda:qualification CI_SIMULATOR_IMAGE=deda-ci-provider-simulator:qualification CI_RUNNER_SIMULATOR_IMAGE=deda-ci-runner-lifecycle-simulator:qualification QUAL_SECRET_PREFIX=deda-qual-static docker stack config -c stack.yml >/dev/null)
 fi

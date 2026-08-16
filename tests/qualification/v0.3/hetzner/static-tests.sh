@@ -360,4 +360,94 @@ if "$SCRIPT_DIR/collect-evidence.sh" >/dev/null 2>&1; then
 fi
 pass 'collect fails when provider token file contents appear in evidence'
 
+path_entry_count() {
+  local needle=$1 dir count=0
+  while IFS= read -r dir; do
+    [[ "$dir" == "$needle" ]] && count=$((count + 1))
+  done < <(printf '%s\n' "${PATH//:/$'\n'}")
+  printf '%s\n' "$count"
+}
+
+RUN_ID=static-reentry
+export RUN_ID
+RUN_DIR=$(state_dir "$RUN_ID")
+mkdir -p "$RUN_DIR"
+SSH_PRIVATE_KEY="$RUN_DIR/id_ed25519"
+printf 'fake-qualification-key\n' > "$SSH_PRIVATE_KEY"
+chmod 600 "$SSH_PRIVATE_KEY"
+export RUN_DIR SSH_PRIVATE_KEY
+MANAGER_1_PUBLIC=203.0.113.25
+SWARM_READY=1
+export MANAGER_1_PUBLIC SWARM_READY
+unset DOCKER_HOST SAVED_DOCKER_HOST DEDA_QUAL_SYSTEM_SSH
+SAVED_DOCKER_HOST="ssh://root@${MANAGER_1_PUBLIC}"
+export SAVED_DOCKER_HOST
+
+fake_ssh_dir="$tmpdir/system-ssh"
+mkdir -p "$fake_ssh_dir"
+export SSH_WRAPPER_LOG="$tmpdir/ssh-wrapper.log"
+: > "$SSH_WRAPPER_LOG"
+cat > "$fake_ssh_dir/ssh" <<'EOF'
+#!/usr/bin/env bash
+printf 'FAKE_SYSTEM_SSH\n' >> "${SSH_WRAPPER_LOG:?}"
+printf '%s\n' "$@" >> "${SSH_WRAPPER_LOG:?}"
+exit 0
+EOF
+chmod 755 "$fake_ssh_dir/ssh"
+export PATH="$fake_ssh_dir:$PATH"
+
+apply_remote_docker
+first_system_ssh=$DEDA_QUAL_SYSTEM_SSH
+first_wrapper=$RUN_DIR/bin/ssh
+[[ -x "$first_wrapper" ]] || fail 'first apply_remote_docker did not write an SSH wrapper'
+[[ "$first_system_ssh" == "$fake_ssh_dir/ssh" ]] || fail "first apply resolved $first_system_ssh, not the system ssh"
+[[ "$DOCKER_HOST" == ssh://root@203.0.113.25 ]] || fail "DOCKER_HOST was $DOCKER_HOST"
+[[ "$DOCKER_HOST" != tcp://* ]] || fail 'DOCKER_HOST used TCP'
+[[ $(path_entry_count "$RUN_DIR/bin") == 1 ]] || fail 'PATH did not contain the wrapper bin once after the first apply'
+[[ "$PATH" == "$RUN_DIR/bin:"* ]] || fail 'wrapper bin was not first on PATH after the first apply'
+
+apply_remote_docker
+[[ "$DEDA_QUAL_SYSTEM_SSH" == "$first_system_ssh" ]] || fail 'second apply changed the resolved system ssh'
+[[ $(path_entry_count "$RUN_DIR/bin") == 1 ]] || fail 'PATH listed the wrapper bin more than once after the second apply'
+
+apply_remote_docker
+[[ "$DEDA_QUAL_SYSTEM_SSH" == "$first_system_ssh" ]] || fail 'third apply changed the resolved system ssh'
+[[ $(path_entry_count "$RUN_DIR/bin") == 1 ]] || fail 'PATH listed the wrapper bin more than once after the third apply'
+[[ "$PATH" == "$RUN_DIR/bin:"* ]] || fail 'wrapper bin was not first on PATH after repeated apply'
+invoke_canonical true
+[[ "$DEDA_QUAL_SYSTEM_SSH" == "$first_system_ssh" ]] || fail 'invoke_canonical changed the resolved system ssh'
+[[ $(path_entry_count "$RUN_DIR/bin") == 1 ]] || fail 'invoke_canonical duplicated the wrapper bin on PATH'
+
+if grep -Fq "$first_wrapper" "$first_wrapper"; then
+  fail 'generated SSH wrapper recursively selected itself as the backing client'
+fi
+grep -Fq "$first_system_ssh" "$first_wrapper" || fail 'generated SSH wrapper does not exec the resolved system ssh'
+for opt in BatchMode=yes IdentitiesOnly=yes ConnectTimeout=10 StrictHostKeyChecking=accept-new; do
+  grep -Fq -- "-o $opt" "$first_wrapper" || fail "generated SSH wrapper is missing $opt"
+done
+grep -Fq "$SSH_PRIVATE_KEY" "$first_wrapper" || fail 'generated SSH wrapper is missing the ephemeral private key'
+grep -Fq "$RUN_DIR/known_hosts" "$first_wrapper" || fail 'generated SSH wrapper is missing the run-scoped known_hosts'
+
+unset DEDA_QUAL_SYSTEM_SSH
+apply_remote_docker
+[[ "$DEDA_QUAL_SYSTEM_SSH" == "$first_system_ssh" ]] || fail 're-resolve after unsetting DEDA_QUAL_SYSTEM_SSH selected the wrapper'
+if grep -Fq "$first_wrapper" "$first_wrapper"; then
+  fail 're-resolved SSH wrapper recursively selected itself'
+fi
+
+: > "$SSH_WRAPPER_LOG"
+"$RUN_DIR/bin/ssh" -o ExtraOption=yes root@203.0.113.25 docker info
+grep -Fxq FAKE_SYSTEM_SSH "$SSH_WRAPPER_LOG" || fail 'wrapper did not invoke the real system ssh executable'
+grep -Fxq -- '-o' "$SSH_WRAPPER_LOG" || fail 'wrapper invocation dropped -o'
+grep -Fxq -- 'BatchMode=yes' "$SSH_WRAPPER_LOG" || fail 'wrapper invocation dropped BatchMode=yes'
+grep -Fxq -- 'IdentitiesOnly=yes' "$SSH_WRAPPER_LOG" || fail 'wrapper invocation dropped IdentitiesOnly=yes'
+grep -Fxq -- '-i' "$SSH_WRAPPER_LOG" || fail 'wrapper invocation dropped the private key'
+grep -Fq -- "$SSH_PRIVATE_KEY" "$SSH_WRAPPER_LOG" || fail 'wrapper invocation dropped the ephemeral private key path'
+if ( DOCKER_HOST='tcp://203.0.113.25:2375' apply_remote_docker ) >/dev/null 2>&1; then
+  fail 'apply_remote_docker accepted a public Docker TCP endpoint'
+fi
+DOCKER_HOST=$SAVED_DOCKER_HOST
+export DOCKER_HOST
+pass 'apply_remote_docker is re-entrant and keeps the system ssh identity'
+
 printf 'v0.3 Hetzner qualification static tests passed.\n'

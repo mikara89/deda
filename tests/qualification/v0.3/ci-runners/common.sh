@@ -160,6 +160,10 @@ wait_replicas() {
   local name=$1 expected=$2
   wait_until "$(service "$name") desired replicas=$expected" 90 bash -c "[[ \"\$(docker service inspect '$(service "$name")' --format '{{.Spec.Mode.Replicated.Replicas}}' 2>/dev/null || true)\" == '$expected' ]]" || fail_scenario "timed out waiting for $(service "$name") desired replicas=$expected"
 }
+
+update_ephemeral_service() {
+  docker service update --detach=true "$@"
+}
 wait_running_tasks() {
   local name=$1 expected=$2
   wait_until "$(service "$name") running tasks=$expected" 180 bash -c "[[ \"\$(docker service ps '$(service "$name")' --filter desired-state=running --format '{{.CurrentState}}' 2>/dev/null | grep -c '^Running' || true)\" == '$expected' ]]" || fail_scenario "timed out waiting for $(service "$name") running tasks=$expected"
