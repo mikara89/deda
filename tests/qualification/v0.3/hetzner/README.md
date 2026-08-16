@@ -154,4 +154,5 @@ Canonical files remain under `tests/qualification/results/<RUN_ID>/v0.3-ci/`:
 - provider-specific evidence from the canonical harness
 
 Hetzner metadata is added under `v0.3-ci/hetzner/` and summarized in
-`HETZNER.md`. This layer does not invent alternate PASS calculations.
+`hetzner/RESULT.md`. Canonical files in `v0.3-ci/` are not rewritten.
+This layer does not invent alternate PASS calculations.

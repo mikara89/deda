@@ -15,7 +15,7 @@ elif [[ "$SCRIPT_DIR" == /mnt/* ]] && grep -Eqi '(microsoft|wsl)' /proc/sys/kern
 else
   RUNTIME_ROOT=$LEGACY_RUNTIME_ROOT
 fi
-RESULTS_ROOT="$REPO_ROOT/tests/qualification/results"
+RESULTS_ROOT="${DEDA_QUAL_RESULTS_ROOT:-$REPO_ROOT/tests/qualification/results}"
 export RUNTIME_ROOT LEGACY_RUNTIME_ROOT CANONICAL_DIR REPO_ROOT
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -175,8 +175,8 @@ copy_from_node() { local node=$1 source=$2 target=$3; scp -i "$SSH_PRIVATE_KEY" 
 
 wait_for() {
   local description=$1 attempts=$2 seconds=$3; shift 3
-  local attempt
-  for attempt in $(seq 1 "$attempts"); do
+  local _
+  for _ in $(seq 1 "$attempts"); do
     if "$@"; then return 0; fi
     sleep "$seconds"
   done
@@ -282,7 +282,7 @@ redact_tree() {
     sed -Ei \
       -e 's/HCLOUD_TOKEN[[:space:]]*=[[:space:]]*[^[:space:]]+/HCLOUD_TOKEN=[REDACTED]/g' \
       -e 's/[Aa]uthorization:[[:space:]]*[^[:space:]]+/Authorization: [REDACTED]/g' \
-      -e 's/[Bb]earer[[:space:]]+[A-Za-z0-9._\-+=\/]+/Bearer [REDACTED]/g' \
+      -e 's/[Bb]earer[[:space:]]+[A-Za-z0-9._+=/-]+/Bearer [REDACTED]/g' \
       -e 's/([Pp]assword|[Ss]ecret|[Tt]oken|[Pp]at)[=:][[:space:]]*[^[:space:]"]+/\1=[REDACTED]/g' \
       "$file"
   done < <(find "$root" -type f \( -name '*.txt' -o -name '*.json' -o -name '*.log' -o -name '*.md' -o -name '*.yml' -o -name '*.yaml' -o -name '*.env' \) -print0)
@@ -294,4 +294,28 @@ assert_no_token_leak() {
   if grep -R --binary-files=without-match -E 'HCLOUD_TOKEN=([^[:space:][]+|".+")' "$root" | grep -v '\[REDACTED\]' | grep -v 'HCLOUD_TOKEN=$' >/dev/null; then
     die "Refusing to keep evidence that appears to contain HCLOUD_TOKEN at $root"
   fi
+}
+
+assert_no_secret_leak() {
+  assert_no_token_leak "$1"
+}
+
+assert_secret_file_value_absent() {
+  local name=$1 root=$2 path=${!1-} secret
+  [[ -n "$path" && -f "$path" && -r "$path" ]] || return 0
+  secret=$(tr -d '\r\n' < "$path")
+  [[ -n "$secret" ]] || return 0
+  if grep -R --binary-files=without-match -F -- "$secret" "$root" >/dev/null; then
+    die "evidence contains provider credential material from $name"
+  fi
+}
+
+assert_provider_secret_files_absent() {
+  local root=$1 name
+  for name in GITHUB_QUAL_QUEUE_TOKEN_FILE GITHUB_QUAL_RUNNER_ADMIN_TOKEN_FILE \
+    AZURE_QUAL_QUEUE_TOKEN_FILE AZURE_QUAL_AGENT_TOKEN_FILE \
+    GITLAB_QUAL_QUEUE_TOKEN_FILE GITLAB_QUAL_RUNNER_TOKEN_FILE \
+    DEDA_QUAL_REGISTRY_TOKEN_FILE; do
+    assert_secret_file_value_absent "$name" "$root"
+  done
 }

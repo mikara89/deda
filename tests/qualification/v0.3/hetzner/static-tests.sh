@@ -41,10 +41,10 @@ before "$SCRIPT_DIR/provision.sh" 'Dry run validated inputs; no Hetzner resource
   'provision --dry-run must exit before creating a server'
 pass 'provision dry-run precedes resource creation'
 
-DEDA_IMAGE=$PIN_DEDA
-GITHUB_QUAL_RUNNER_IMAGE=$PIN_GH
-AZURE_QUAL_RUNNER_IMAGE=$PIN_AZ
-GITLAB_QUAL_RUNNER_IMAGE=$PIN_GL
+export DEDA_IMAGE=$PIN_DEDA
+export GITHUB_QUAL_RUNNER_IMAGE=$PIN_GH
+export AZURE_QUAL_RUNNER_IMAGE=$PIN_AZ
+export GITLAB_QUAL_RUNNER_IMAGE=$PIN_GL
 assert_all_candidate_pins
 pass 'immutable digest pins are accepted'
 
@@ -115,8 +115,8 @@ fi
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir" /tmp/deda-v03-hetzner-real.err /tmp/deda-v03-hetzner-real2.err /tmp/deda-v03-hetzner-run.err /tmp/deda-v03-hetzner-upload.err /tmp/deda-v03-hetzner-upload2.err /tmp/deda-v03-hetzner-destroy.err /tmp/deda-v03-hetzner-destroy2.err /tmp/deda-v03-hetzner-usage.err' EXIT
 export DEDA_QUAL_RUNTIME_ROOT="$tmpdir/runtime"
-RUNTIME_ROOT=$DEDA_QUAL_RUNTIME_ROOT
-LEGACY_RUNTIME_ROOT=$DEDA_QUAL_RUNTIME_ROOT
+export RUNTIME_ROOT=$DEDA_QUAL_RUNTIME_ROOT
+export LEGACY_RUNTIME_ROOT=$DEDA_QUAL_RUNTIME_ROOT
 RUN_ID=static-token-test
 export RUN_ID HCLOUD_TOKEN=super-secret-hcloud-token-value
 mkdir -p "$(state_dir "$RUN_ID")"
@@ -132,7 +132,16 @@ pass 'HCLOUD_TOKEN is never written to generated state'
 if grep -R --binary-files=without-match -nE 'cat "\$\{?(GITHUB|AZURE|GITLAB)_QUAL_[A-Z_]*TOKEN_FILE' "$SCRIPT_DIR"; then
   fail 'provider token files must not be catted into logs or evidence'
 fi
-grep -Fq 'redact_tree' "$SCRIPT_DIR/collect-evidence.sh"
+# shellcheck disable=SC2016
+grep -Fq 'redact_tree "$out"' "$SCRIPT_DIR/collect-evidence.sh"
+# shellcheck disable=SC2016
+if grep -nE 'redact_tree "\$root"|redact_tree \$root' "$SCRIPT_DIR/collect-evidence.sh"; then
+  fail 'collect-evidence.sh must not mutate canonical $root'
+fi
+# shellcheck disable=SC2016
+grep -Fq 'assert_no_secret_leak "$root"' "$SCRIPT_DIR/collect-evidence.sh"
+# shellcheck disable=SC2016
+grep -Fq 'assert_provider_secret_files_absent "$root"' "$SCRIPT_DIR/collect-evidence.sh"
 grep -Fq 'HCLOUD_TOKEN' "$SCRIPT_DIR/collect-evidence.sh"
 pass 'provider token contents are not written to evidence'
 
@@ -147,14 +156,17 @@ pass 'destroy requires exact run identity'
 
 grep -Fq 'purpose == "deda-qualification"' "$SCRIPT_DIR/destroy.sh"
 grep -Fq 'version == "v0-3"' "$SCRIPT_DIR/destroy.sh"
+# shellcheck disable=SC2016
 grep -Fq '.labels.run == $run' "$SCRIPT_DIR/destroy.sh"
 grep -Fq 'purpose == "deda-qualification"' "$SCRIPT_DIR/list-runs.sh"
 grep -Fq 'version == "v0-3"' "$SCRIPT_DIR/list-runs.sh"
 pass 'destroy/list filter by purpose, version=v0-3, and run'
 
+# shellcheck disable=SC2016
 if grep -nE 'hcloud[[:space:]]+server[[:space:]]+delete[[:space:]]+"?\$DEDA_QUAL_PREFIX|delete --selector|name=.*\$DEDA_QUAL_PREFIX' "$SCRIPT_DIR/destroy.sh"; then
   fail 'destroy must not perform broad prefix deletion'
 fi
+# shellcheck disable=SC2016
 if grep -nE 'hcloud[[:space:]].*delete[[:space:]]+"?\$\{?DEDA_QUAL_PREFIX' "$SCRIPT_DIR"/destroy.sh "$SCRIPT_DIR"/list-runs.sh; then
   fail 'destroy/list must not delete by name prefix'
 fi
@@ -201,6 +213,7 @@ grep -Fq 'examples/ci-runners/gitlab' "$SCRIPT_DIR/prepare-candidate.sh"
 pass 'prepare does not rebuild DEDA'
 
 grep -Fq 'ssh://' "$SCRIPT_DIR/common.sh"
+# shellcheck disable=SC2016
 grep -Fq 'DOCKER_HOST="ssh://root@${MANAGER_1_PUBLIC}"' "$SCRIPT_DIR/provision.sh"
 grep -Fq 'ssh://root@' "$SCRIPT_DIR/configure-swarm.sh"
 if grep -nE 'DOCKER_HOST=tcp://|2375/2376 publicly|:2375|:2376' "$SCRIPT_DIR/provision.sh"; then
@@ -286,5 +299,65 @@ if "$SCRIPT_DIR/qualify.sh" not-a-command >/tmp/deda-v03-hetzner-usage.err 2>&1;
 fi
 grep -Fq 'Usage: qualify.sh' /tmp/deda-v03-hetzner-usage.err
 pass 'qualify.sh usage errors are clear'
+
+write_fake_run() {
+  local run=$1
+  RUN_ID=$run
+  export RUN_ID RC_TAG=v0.3.0-rc.2 RC_COMMIT
+  export DEDA_IMAGE=$PIN_DEDA GITHUB_QUAL_RUNNER_IMAGE=$PIN_GH
+  export AZURE_QUAL_RUNNER_IMAGE=$PIN_AZ GITLAB_QUAL_RUNNER_IMAGE=$PIN_GL
+  mkdir -p "$(state_dir "$RUN_ID")"
+  cat > "$(candidate_file "$RUN_ID")" <<EOF
+RC_TAG=$RC_TAG
+RC_COMMIT=$RC_COMMIT
+DEDA_IMAGE=$DEDA_IMAGE
+GITHUB_QUAL_RUNNER_IMAGE=$GITHUB_QUAL_RUNNER_IMAGE
+AZURE_QUAL_RUNNER_IMAGE=$AZURE_QUAL_RUNNER_IMAGE
+GITLAB_QUAL_RUNNER_IMAGE=$GITLAB_QUAL_RUNNER_IMAGE
+EOF
+  persist_state
+}
+
+export DEDA_QUAL_RESULTS_ROOT="$tmpdir/results"
+RESULTS_ROOT=$DEDA_QUAL_RESULTS_ROOT
+export RESULTS_ROOT
+write_fake_run static-collect
+canon=$(canonical_result_dir "$RUN_ID")
+mkdir -p "$canon/real-github"
+printf '%s\n' '{"fastQualification":"PASS","fullDeterministicQualification":"PASS","releaseQualification":"NOT_QUALIFIED"}' > "$canon/result.json"
+printf '%s\n' '{"candidateCommit":"'"$RC_COMMIT"'","candidateImage":"'"$PIN_DEDA"'","containsSecrets":false}' > "$canon/manifest.json"
+printf '%s\n' '{"releaseQualification":"PASS","candidateMatched":true,"fullDeterministicQualification":"PASS","providers":[]}' > "$canon/real-provider-result.json"
+printf '%s\n' '{"provider":"github","status":"PASS"}' > "$canon/real-github/result.json"
+before_result=$(sha256sum "$canon/result.json" | awk '{print $1}')
+before_manifest=$(sha256sum "$canon/manifest.json" | awk '{print $1}')
+before_real=$(sha256sum "$canon/real-provider-result.json" | awk '{print $1}')
+before_github=$(sha256sum "$canon/real-github/result.json" | awk '{print $1}')
+"$SCRIPT_DIR/collect-evidence.sh"
+[[ $(sha256sum "$canon/result.json" | awk '{print $1}') == "$before_result" ]] || fail 'collect mutated canonical result.json'
+[[ $(sha256sum "$canon/manifest.json" | awk '{print $1}') == "$before_manifest" ]] || fail 'collect mutated canonical manifest.json'
+[[ $(sha256sum "$canon/real-provider-result.json" | awk '{print $1}') == "$before_real" ]] || fail 'collect mutated canonical real-provider-result.json'
+[[ $(sha256sum "$canon/real-github/result.json" | awk '{print $1}') == "$before_github" ]] || fail 'collect mutated canonical provider evidence'
+[[ ! -e "$canon/HETZNER.md" ]] || fail 'collect must not write HETZNER.md into the canonical evidence root'
+[[ -f "$(hetzner_result_dir "$RUN_ID")/RESULT.md" ]] || fail 'Hetzner RESULT.md was not written under the Hetzner evidence directory'
+pass 'canonical evidence is byte-identical after Hetzner collection'
+
+secret_file="$tmpdir/github-queue.token"
+printf '%s' 'unique-provider-secret-xyz-do-not-retain' > "$secret_file"
+export GITHUB_QUAL_QUEUE_TOKEN_FILE=$secret_file
+write_fake_run static-secret-absent
+canon=$(canonical_result_dir "$RUN_ID")
+mkdir -p "$canon"
+printf '%s\n' '{"fastQualification":"PASS","fullDeterministicQualification":"PASS","releaseQualification":"NOT_QUALIFIED"}' > "$canon/result.json"
+"$SCRIPT_DIR/collect-evidence.sh"
+pass 'collect passes when provider token file contents are absent from evidence'
+
+write_fake_run static-secret-present
+canon=$(canonical_result_dir "$RUN_ID")
+mkdir -p "$canon"
+printf '%s\n' '{"detail":"unique-provider-secret-xyz-do-not-retain"}' > "$canon/result.json"
+if "$SCRIPT_DIR/collect-evidence.sh" >/dev/null 2>&1; then
+  fail 'collect accepted canonical evidence that contains provider token material'
+fi
+pass 'collect fails when provider token file contents appear in evidence'
 
 printf 'v0.3 Hetzner qualification static tests passed.\n'

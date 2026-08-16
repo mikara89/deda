@@ -101,6 +101,8 @@ jq -n \
     containsSecrets:false
   }' > "$out/summary.json"
 
+# Markdown backticks are literal here, not shell command substitutions.
+# shellcheck disable=SC2016
 {
   printf '# DEDA v0.3 Hetzner release qualification\n\n'
   printf 'This summary does not recalculate provider PASS. Canonical files remain\n'
@@ -127,10 +129,10 @@ jq -n \
   printf '| releaseQualification | %s |\n\n' "$release"
   printf 'Qualification is not promotion. Upload and `promote-release.yml` remain explicit.\n'
 } > "$out/RESULT.md"
-cp "$out/RESULT.md" "$root/HETZNER.md"
 
 redact_tree "$out"
-redact_tree "$root"
-assert_no_token_leak "$out"
-assert_no_token_leak "$root"
+assert_no_secret_leak "$out"
+assert_no_secret_leak "$root"
+assert_provider_secret_files_absent "$out"
+assert_provider_secret_files_absent "$root"
 note "Hetzner evidence written to $out. Canonical evidence remains the source of truth under $root."
