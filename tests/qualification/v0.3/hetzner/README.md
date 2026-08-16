@@ -80,6 +80,29 @@ GitHub / Azure / GitLab provider logic.
 Default topology is **one** manager. v0.2 already qualifies multi-manager HA.
 `DEDA_QUAL_MANAGER_COUNT` is reserved and must stay `1` in this harness.
 
+## Operator environment
+
+Hetzner `configure`, `deterministic`, `real`, and `run` must be executed from
+**Ubuntu WSL or another Linux host** whose `docker` CLI can invoke the system
+`ssh` client from `PATH`.
+
+Windows Git Bash is supported for Git, `gh`, `prepare`, and GHCR work. It is
+**not** a supported environment for Docker-over-SSH against a fresh Hetzner
+manager: Windows `docker.exe` does not consume the extensionless Bash wrapper
+at `$RUN_DIR/bin/ssh`, so authentication can fail with
+`Permission denied (publickey,password)` unless a manual `~/.ssh/config`
+workaround is added. That workaround is not part of the release contract.
+
+For `v0.3.0-rc.4` and later v0.3 release qualification, run:
+
+```bash
+./qualify.sh configure
+./qualify.sh deterministic
+./qualify.sh real --confirm-real-provider-tests
+```
+
+from Ubuntu WSL/Linux after `git checkout --detach` of the exact RC tag.
+
 ## Operator commands
 
 ```bash

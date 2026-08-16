@@ -183,11 +183,49 @@ wait_for() {
   die "Timed out waiting for $description after $((attempts * seconds)) seconds."
 }
 
+resolve_system_ssh() {
+  local dest=$1 candidate
+  if [[ -n "${DEDA_QUAL_SYSTEM_SSH:-}" && -x "$DEDA_QUAL_SYSTEM_SSH" && "$DEDA_QUAL_SYSTEM_SSH" != "$dest" ]]; then
+    printf '%s\n' "$DEDA_QUAL_SYSTEM_SSH"
+    return 0
+  fi
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" && -x "$candidate" && "$candidate" != "$dest" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(type -ap ssh 2>/dev/null || true)
+  local dir
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] || continue
+    candidate="$dir/ssh"
+    [[ -x "$candidate" && "$candidate" != "$dest" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(printf '%s\n' "${PATH//:/$'\n'}")
+  for candidate in /usr/bin/ssh /bin/ssh; do
+    if [[ -x "$candidate" && "$candidate" != "$dest" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+prepend_qual_bin_to_path() {
+  local bin=$1 dir filtered=""
+  while IFS= read -r dir; do
+    [[ -n "$dir" && "$dir" != "$bin" ]] || continue
+    filtered+="${filtered:+:}$dir"
+  done < <(printf '%s\n' "${PATH//:/$'\n'}")
+  export PATH="$bin${filtered:+:$filtered}"
+}
+
 write_docker_ssh_wrapper() {
   local real_ssh dest="$RUN_DIR/bin/ssh"
   [[ -n "${SSH_PRIVATE_KEY:-}" && -f "$SSH_PRIVATE_KEY" ]] || die 'SSH private key is missing; provision the run first.'
-  real_ssh=$(command -v ssh)
-  [[ -n "$real_ssh" && "$real_ssh" != "$dest" ]] || die 'Unable to locate the system ssh client.'
+  real_ssh=$(resolve_system_ssh "$dest") || die 'Unable to locate the system ssh client.'
+  [[ -n "$real_ssh" && "$real_ssh" != "$dest" && -x "$real_ssh" ]] || die 'Unable to locate the system ssh client.'
+  export DEDA_QUAL_SYSTEM_SSH=$real_ssh
   mkdir -p "$RUN_DIR/bin"
   if [[ "$RUN_DIR" == /mnt/* ]]; then
     cat > "$dest" <<EOF
@@ -232,7 +270,7 @@ apply_remote_docker() {
   [[ "$DOCKER_HOST" == ssh://* ]] || die "DOCKER_HOST must use ssh:// remote transport, got: $DOCKER_HOST"
   [[ "$DOCKER_HOST" != tcp://* && "$DOCKER_HOST" != *:2375 && "$DOCKER_HOST" != *:2376 ]] || die "Refusing public/unauthenticated Docker TCP endpoint: $DOCKER_HOST"
   write_docker_ssh_wrapper
-  export PATH="$RUN_DIR/bin:$PATH"
+  prepend_qual_bin_to_path "$RUN_DIR/bin"
   export DOCKER_HOST
   unset DOCKER_TLS_VERIFY DOCKER_CERT_PATH
 }
