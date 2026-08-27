@@ -2,7 +2,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
-    <PackageReference Include="OpenTelemetry" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry" Version="1.18.0" />
     <ProjectReference Include="..\Deda.Core\Deda.Core.csproj" />
   </ItemGroup>
 
