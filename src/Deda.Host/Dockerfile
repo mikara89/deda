@@ -1,7 +1,7 @@
 # -------------------------
 # Base runtime for AOT app
 # -------------------------
-FROM mcr.microsoft.com/dotnet/runtime-deps:10.0 AS base
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0 AS base
 USER $APP_UID
 WORKDIR /app
 
